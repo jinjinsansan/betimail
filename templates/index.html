@@ -1,0 +1,403 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Betimail - NFTコミュニティサポート</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; }
+  header { background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 18px 32px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #2a2a4a; }
+  header h1 { font-size: 1.4rem; color: #7c5cbf; letter-spacing: 1px; }
+  header span { font-size: 0.85rem; color: #888; }
+  nav { background: #13131f; border-bottom: 1px solid #2a2a4a; display: flex; gap: 4px; padding: 0 24px; }
+  nav button { background: none; border: none; color: #999; padding: 14px 20px; cursor: pointer; font-size: 0.9rem; border-bottom: 3px solid transparent; transition: all 0.2s; }
+  nav button.active, nav button:hover { color: #a070ff; border-bottom-color: #a070ff; }
+  main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
+  .card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+  .card h2 { font-size: 1rem; color: #a070ff; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; }
+  .tab-content { display: none; } .tab-content.active { display: block; }
+  label { display: block; font-size: 0.82rem; color: #aaa; margin-bottom: 4px; margin-top: 12px; }
+  input, select, textarea { width: 100%; background: #0f0f1a; border: 1px solid #3a3a5a; border-radius: 8px; padding: 10px 12px; color: #e0e0e0; font-size: 0.9rem; outline: none; transition: border-color 0.2s; }
+  input:focus, select:focus, textarea:focus { border-color: #7c5cbf; }
+  textarea { resize: vertical; min-height: 120px; font-family: inherit; }
+  button.btn { background: #7c5cbf; color: #fff; border: none; border-radius: 8px; padding: 10px 22px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s; }
+  button.btn:hover { background: #9b7de0; }
+  button.btn.danger { background: #c0392b; } button.btn.danger:hover { background: #e74c3c; }
+  button.btn.secondary { background: #2a2a4a; } button.btn.secondary:hover { background: #3a3a6a; }
+  .nft-checkboxes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+  .nft-checkboxes label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.88rem; color: #ccc; margin: 0; background: #0f0f1a; border: 1px solid #3a3a5a; border-radius: 6px; padding: 6px 12px; }
+  .nft-checkboxes input[type=checkbox] { width: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th { text-align: left; color: #888; font-weight: 500; padding: 10px 12px; border-bottom: 1px solid #2a2a4a; }
+  td { padding: 10px 12px; border-bottom: 1px solid #1e1e38; vertical-align: top; }
+  tr:hover td { background: #1e1e38; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 500; }
+  .badge.kaiin { background: #1a3a4a; color: #4fc3f7; }
+  .badge.pachi { background: #3a1a4a; color: #ce93d8; }
+  .badge.lucky { background: #1a3a1a; color: #81c784; }
+  .badge.special { background: #3a2a1a; color: #ffb74d; }
+  .badge.unknown { background: #2a2a2a; color: #888; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .dot-sent { background: #4caf50; } .dot-error { background: #f44336; } .dot-pending { background: #ff9800; }
+  .result-box { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 14px; margin-top: 14px; font-size: 0.85rem; max-height: 240px; overflow-y: auto; }
+  .result-item { padding: 4px 0; border-bottom: 1px solid #1e1e38; }
+  .result-item:last-child { border-bottom: none; }
+  .hint { font-size: 0.78rem; color: #666; margin-top: 4px; }
+  .stats-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .stat { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 14px 20px; flex: 1; min-width: 140px; }
+  .stat .num { font-size: 2rem; font-weight: 700; color: #a070ff; }
+  .stat .lbl { font-size: 0.75rem; color: #888; margin-top: 2px; }
+  #toast { position: fixed; bottom: 24px; right: 24px; background: #4caf50; color: #fff; padding: 12px 22px; border-radius: 8px; font-size: 0.9rem; display: none; z-index: 9999; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
+  #toast.error { background: #f44336; }
+  .flex-row { display: flex; gap: 12px; align-items: flex-end; }
+  .flex-row > * { flex: 1; }
+  .flex-row > button { flex: 0 0 auto; margin-bottom: 0; }
+  .placeholder { color: #555; text-align: center; padding: 32px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ Betimail</h1>
+  <span>NFTコミュニティ サポートメール管理</span>
+</header>
+
+<nav>
+  <button class="active" onclick="switchTab('send')">📤 メール送信</button>
+  <button onclick="switchTab('members')">👥 メンバー管理</button>
+  <button onclick="switchTab('history')">📋 送受信履歴</button>
+</nav>
+
+<main>
+
+<!-- ── メール送信タブ ── -->
+<div id="tab-send" class="tab-content active">
+  <div class="stats-row" id="stats-row"></div>
+
+  <div class="card">
+    <h2>メール送信</h2>
+    <label>送信対象 NFT種別（未選択で全員に送信）</label>
+    <div class="nft-checkboxes" id="nft-checkboxes"></div>
+
+    <label>件名</label>
+    <input type="text" id="subject" placeholder="例: 【重要】コミュニティからのお知らせ">
+
+    <label>本文</label>
+    <p class="hint">※ {name}・{nft_type} は自動的にメンバー情報に置換されます</p>
+    <textarea id="body" placeholder="{name} 様
+
+いつもコミュニティをご利用いただきありがとうございます。
+{nft_type} オーナーの皆様へお知らせです。
+
+...
+
+運営チーム"></textarea>
+
+    <div style="margin-top:16px; display:flex; gap:12px; align-items:center;">
+      <button class="btn" onclick="sendEmails()">📤 送信する</button>
+      <button class="btn secondary" onclick="previewCount()">対象人数を確認</button>
+      <span id="preview-count" style="color:#888; font-size:0.85rem;"></span>
+    </div>
+
+    <div class="result-box" id="send-result" style="display:none;"></div>
+  </div>
+</div>
+
+<!-- ── メンバー管理タブ ── -->
+<div id="tab-members" class="tab-content">
+  <div class="card">
+    <h2>メンバー追加</h2>
+    <div class="flex-row">
+      <div>
+        <label>名前</label>
+        <input type="text" id="m-name" placeholder="山田太郎">
+      </div>
+      <div>
+        <label>メールアドレス</label>
+        <input type="email" id="m-email" placeholder="yamada@example.com">
+      </div>
+    </div>
+    <div class="flex-row" style="margin-top:0;">
+      <div>
+        <label>NFT種別</label>
+        <select id="m-nft"></select>
+      </div>
+      <div>
+        <label>購入日</label>
+        <input type="date" id="m-date">
+      </div>
+      <div>
+        <label>備考</label>
+        <input type="text" id="m-notes" placeholder="任意">
+      </div>
+    </div>
+    <button class="btn" style="margin-top:16px;" onclick="addMember()">追加</button>
+  </div>
+
+  <div class="card">
+    <h2>メンバー一覧</h2>
+    <div style="margin-bottom:12px; display:flex; gap:8px; align-items:center;">
+      <select id="filter-nft" onchange="loadMembers()" style="width:220px;">
+        <option value="">-- すべてのNFT種別 --</option>
+      </select>
+      <button class="btn secondary" onclick="loadMembers()">更新</button>
+    </div>
+    <table>
+      <thead><tr><th>名前</th><th>メールアドレス</th><th>NFT種別</th><th>購入日</th><th>備考</th><th></th></tr></thead>
+      <tbody id="members-table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── 履歴タブ ── -->
+<div id="tab-history" class="tab-content">
+  <div class="card">
+    <h2>送信済みメール</h2>
+    <table>
+      <thead><tr><th>日時</th><th>宛先</th><th>NFT種別</th><th>件名</th></tr></thead>
+      <tbody id="sent-table-body"></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h2>受信メール（AI処理状況）</h2>
+    <table>
+      <thead><tr><th>日時</th><th>送信者</th><th>件名</th><th>AI信頼度</th><th>ステータス</th></tr></thead>
+      <tbody id="received-table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+</main>
+
+<div id="toast"></div>
+
+<script>
+const NFT_BADGE = {
+  '会員権NFT': 'kaiin',
+  'パチスロホイホイNFT': 'pachi',
+  'ラッキーマスタードNFT': 'lucky',
+  'スペシャルマスタードNFT': 'special',
+};
+
+let nftTypes = [];
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || 'エラーが発生しました');
+  }
+  return res.json();
+}
+
+function toast(msg, isError = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 3500);
+}
+
+function nftBadge(type) {
+  const cls = NFT_BADGE[type] || 'unknown';
+  return `<span class="badge ${cls}">${type || '不明'}</span>`;
+}
+
+function fmtDate(iso) {
+  if (!iso) return '-';
+  return iso.replace('T', ' ').substring(0, 16);
+}
+
+async function init() {
+  nftTypes = await api('/api/nft-types');
+
+  // NFTチェックボックス（送信）
+  const cb = document.getElementById('nft-checkboxes');
+  nftTypes.forEach(t => {
+    const lbl = document.createElement('label');
+    lbl.innerHTML = `<input type="checkbox" value="${t}"> ${t}`;
+    lbl.querySelector('input').addEventListener('change', () => previewCount());
+    cb.appendChild(lbl);
+  });
+
+  // NFT選択（メンバー追加）
+  const sel = document.getElementById('m-nft');
+  nftTypes.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t; opt.textContent = t;
+    sel.appendChild(opt);
+  });
+
+  // NFTフィルター（メンバー一覧）
+  const fsel = document.getElementById('filter-nft');
+  nftTypes.forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t; opt.textContent = t;
+    fsel.appendChild(opt);
+  });
+
+  await loadStats();
+  await loadMembers();
+  await loadHistory();
+}
+
+async function loadStats() {
+  const members = await api('/api/members');
+  const row = document.getElementById('stats-row');
+  const counts = {};
+  nftTypes.forEach(t => counts[t] = 0);
+  members.forEach(m => { if (counts[m.nft_type] !== undefined) counts[m.nft_type]++; });
+  row.innerHTML = `
+    <div class="stat"><div class="num">${members.length}</div><div class="lbl">総メンバー数</div></div>
+    ${nftTypes.map(t => `<div class="stat"><div class="num">${counts[t]}</div><div class="lbl">${t}</div></div>`).join('')}
+  `;
+}
+
+async function previewCount() {
+  const selected = getSelectedNftTypes();
+  let members;
+  if (selected.length === 0) {
+    members = await api('/api/members');
+  } else {
+    const all = await api('/api/members');
+    members = all.filter(m => selected.includes(m.nft_type));
+  }
+  document.getElementById('preview-count').textContent = `対象: ${members.length}名`;
+}
+
+function getSelectedNftTypes() {
+  return Array.from(document.querySelectorAll('#nft-checkboxes input:checked')).map(el => el.value);
+}
+
+async function sendEmails() {
+  const subject = document.getElementById('subject').value.trim();
+  const body = document.getElementById('body').value.trim();
+  if (!subject || !body) { toast('件名と本文を入力してください', true); return; }
+
+  const nft_types = getSelectedNftTypes();
+  try {
+    const res = await api('/api/send', {
+      method: 'POST',
+      body: JSON.stringify({ nft_types, subject, body }),
+    });
+    toast(`送信開始: ${res.count}名 にメールを送信中です`);
+    const box = document.getElementById('send-result');
+    box.style.display = 'block';
+    box.innerHTML = `<div class="result-item"><span class="status-dot dot-sent"></span>${res.count}名へ送信処理を開始しました</div>`;
+    await loadStats();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function loadMembers() {
+  const filterNft = document.getElementById('filter-nft').value;
+  const url = filterNft ? `/api/members?nft_type=${encodeURIComponent(filterNft)}` : '/api/members';
+  const members = await api(url);
+  const tbody = document.getElementById('members-table-body');
+  if (members.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="placeholder">メンバーが見つかりません</td></tr>';
+    return;
+  }
+  tbody.innerHTML = members.map(m => `
+    <tr>
+      <td>${m.name}</td>
+      <td>${m.email}</td>
+      <td>${nftBadge(m.nft_type)}</td>
+      <td>${m.joined_date || '-'}</td>
+      <td>${m.notes || '-'}</td>
+      <td><button class="btn danger" style="padding:4px 12px; font-size:0.78rem;" onclick="deleteMember('${m.email}')">削除</button></td>
+    </tr>
+  `).join('');
+}
+
+async function addMember() {
+  const name = document.getElementById('m-name').value.trim();
+  const email = document.getElementById('m-email').value.trim();
+  const nft_type = document.getElementById('m-nft').value;
+  const joined_date = document.getElementById('m-date').value;
+  const notes = document.getElementById('m-notes').value.trim();
+  if (!name || !email || !nft_type) { toast('名前・メール・NFT種別は必須です', true); return; }
+  try {
+    await api('/api/members', { method: 'POST', body: JSON.stringify({ name, email, nft_type, joined_date, notes }) });
+    toast(`${name} を追加しました`);
+    ['m-name','m-email','m-notes'].forEach(id => document.getElementById(id).value = '');
+    await loadMembers();
+    await loadStats();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function deleteMember(email) {
+  if (!confirm(`${email} を削除しますか？`)) return;
+  try {
+    await api(`/api/members/${encodeURIComponent(email)}`, { method: 'DELETE' });
+    toast('削除しました');
+    await loadMembers();
+    await loadStats();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+async function loadHistory() {
+  const [sent, received] = await Promise.all([
+    api('/api/emails/sent'),
+    api('/api/emails/received'),
+  ]);
+
+  const sentBody = document.getElementById('sent-table-body');
+  sentBody.innerHTML = sent.length === 0
+    ? '<tr><td colspan="4" class="placeholder">送信履歴なし</td></tr>'
+    : sent.map(e => `
+      <tr>
+        <td>${fmtDate(e.sent_at)}</td>
+        <td>${e.recipient_name} <span style="color:#666;">&lt;${e.recipient_email}&gt;</span></td>
+        <td>${nftBadge(e.nft_type)}</td>
+        <td>${e.subject}</td>
+      </tr>
+    `).join('');
+
+  const statusLabel = {
+    pending: '<span class="status-dot dot-pending"></span>処理中',
+    approved: '<span class="status-dot dot-sent"></span>承認済み送信',
+    approved_edited: '<span class="status-dot dot-sent"></span>修正送信',
+    auto_sent: '<span class="status-dot dot-sent"></span>AI自動送信',
+    rejected: '<span class="status-dot dot-error"></span>却下',
+  };
+
+  const recvBody = document.getElementById('received-table-body');
+  recvBody.innerHTML = received.length === 0
+    ? '<tr><td colspan="5" class="placeholder">受信履歴なし</td></tr>'
+    : received.map(e => `
+      <tr>
+        <td>${fmtDate(e.received_at)}</td>
+        <td>${e.sender_name || ''} <span style="color:#666;">&lt;${e.sender_email}&gt;</span></td>
+        <td>${e.subject || '-'}</td>
+        <td>${e.ai_confidence != null ? Math.round(e.ai_confidence * 100) + '%' : '-'}</td>
+        <td>${statusLabel[e.status] || e.status}</td>
+      </tr>
+    `).join('');
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  event.target.classList.add('active');
+  if (tab === 'history') loadHistory();
+  if (tab === 'members') loadMembers();
+}
+
+// 今日の日付をデフォルトに
+document.getElementById('m-date').value = new Date().toISOString().split('T')[0];
+
+init();
+</script>
+</body>
+</html>
