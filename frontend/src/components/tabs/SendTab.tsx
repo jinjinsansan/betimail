@@ -2,108 +2,39 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import type { Member, Template, BulkJob } from "@/lib/types";
-import { debounce } from "@/lib/ui";
+import { NFT_TYPES, nftLabel, debounce, nftBadgeClass } from "@/lib/ui";
+import { I } from "@/lib/icons";
+import { Modal } from "../common";
 
 type Props = {
-  nftTypes: string[];
   members: Member[];
   templates: Template[];
   onReload: () => void;
-  notify: (msg: string, err?: boolean) => void;
-  onJump: (tab: string) => void;
+  notify: (msg: string, type?: "success" | "error" | "info") => void;
 };
 
-export default function SendTab({ nftTypes, members, templates, onReload, notify }: Props) {
+export default function SendTab({ members, templates, onReload, notify }: Props) {
   const [selectedNfts, setSelectedNfts] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
-  const [preview, setPreview] = useState("");
-  const [previewCount, setPreviewCount] = useState<number | null>(null);
+  const [preview, setPreview] = useState("本文を入力するとプレビュー表示されます。");
   const [sending, setSending] = useState(false);
   const [job, setJob] = useState<BulkJob | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
-    nftTypes.forEach((t) => (c[t] = 0));
-    members.forEach((m) => { if (c[m.nft_type] !== undefined) c[m.nft_type]++; });
+    NFT_TYPES.forEach((t) => (c[t] = 0));
+    members.forEach((m) => { if (c[m.nft_type] != null) c[m.nft_type]++; });
     return c;
-  }, [nftTypes, members]);
+  }, [members]);
 
-  // body 変更時にプレビュー更新
-  useEffect(() => {
-    if (!body.trim()) {
-      setPreview("本文を入力するとプレビュー表示されます。");
-      return;
-    }
-    const fn = debounce(async () => {
-      try {
-        const r = await api.preview(body);
-        setPreview(r.rendered);
-      } catch (e: any) {
-        setPreview(`⚠️ ${e.message}`);
-      }
-    }, 400);
-    fn();
-  }, [body]);
+  const target = selectedNfts.length === 0
+    ? members
+    : members.filter((m) => selectedNfts.includes(m.nft_type));
 
   function toggleNft(t: string) {
     setSelectedNfts((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]);
-  }
-
-  function calcPreviewCount() {
-    if (selectedNfts.length === 0) {
-      setPreviewCount(members.length);
-    } else {
-      setPreviewCount(members.filter((m) => selectedNfts.includes(m.nft_type)).length);
-    }
-  }
-
-  async function pollJob(jobId: number) {
-    const tick = async () => {
-      try {
-        const j = await api.send.job(jobId);
-        setJob(j);
-        if (j.status === "done") {
-          clearInterval(handle);
-          onReload();
-        }
-      } catch {
-        clearInterval(handle);
-      }
-    };
-    const handle = setInterval(tick, 1500);
-    tick();
-  }
-
-  async function send() {
-    if (!subject.trim() || !body.trim()) {
-      notify("件名と本文を入力してください", true);
-      return;
-    }
-    const count = selectedNfts.length === 0 ? members.length : members.filter((m) => selectedNfts.includes(m.nft_type)).length;
-    if (!confirm(`${count} 名にメールを送信します。よろしいですか？`)) return;
-    setSending(true);
-    try {
-      const r = await api.send.bulk({ nft_types: selectedNfts, subject, body });
-      notify(`送信開始: ${r.count}名 (ジョブID ${r.job_id})`);
-      setJob({ id: r.job_id, total: r.count, sent: 0, failed: 0, status: "running" } as BulkJob);
-      pollJob(r.job_id);
-    } catch (e: any) {
-      notify(e.message, true);
-    } finally {
-      setSending(false);
-    }
-  }
-
-  async function saveAsTemplate() {
-    if (!subject.trim() || !body.trim()) { notify("件名と本文を入力してください", true); return; }
-    const name = prompt("テンプレート名:");
-    if (!name) return;
-    try {
-      await api.templates.upsert(name, subject, body);
-      notify("テンプレートを保存しました");
-      onReload();
-    } catch (e: any) { notify(e.message, true); }
   }
 
   function applyTemplate(id: number) {
@@ -114,70 +45,212 @@ export default function SendTab({ nftTypes, members, templates, onReload, notify
     notify(`「${t.name}」を適用しました`);
   }
 
-  const jobPct = job && job.total > 0 ? Math.round(((job.sent + job.failed) / job.total) * 100) : 0;
+  useEffect(() => {
+    if (!body.trim()) {
+      setPreview("本文を入力するとプレビュー表示されます。");
+      return;
+    }
+    const fn = debounce(async () => {
+      try {
+        const r = await api.preview(body, target[0] || members[0]);
+        setPreview(r.rendered);
+      } catch (e: any) {
+        setPreview(`⚠️ ${e.message}`);
+      }
+    }, 400);
+    fn();
+  }, [body, target.length, members.length]);
+
+  async function pollJob(jobId: number) {
+    const tick = async () => {
+      try {
+        const j = await api.send.job(jobId);
+        setJob(j);
+        if (j.status === "done") {
+          clearInterval(handle);
+          onReload();
+          notify(`${j.sent} 名に送信完了${j.failed > 0 ? ` (失敗 ${j.failed})` : ""}`, j.failed > 0 ? "error" : "success");
+        }
+      } catch {
+        clearInterval(handle);
+      }
+    };
+    const handle = setInterval(tick, 1500);
+    tick();
+  }
+
+  function send() {
+    if (!subject.trim() || !body.trim()) {
+      notify("件名と本文を入力してください", "error");
+      return;
+    }
+    setShowConfirm(true);
+  }
+
+  async function confirmSend() {
+    setShowConfirm(false);
+    setSending(true);
+    try {
+      const r = await api.send.bulk({ nft_types: selectedNfts, subject, body });
+      notify(`送信開始: ${r.count}名 (ジョブID ${r.job_id})`);
+      setJob({ id: r.job_id, total: r.count, sent: 0, failed: 0, status: "running" } as BulkJob);
+      pollJob(r.job_id);
+    } catch (e: any) {
+      notify(e.message, "error");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function saveAsTemplate() {
+    if (!subject.trim() || !body.trim()) {
+      notify("件名と本文を入力してください", "error");
+      return;
+    }
+    const name = prompt("テンプレート名:");
+    if (!name) return;
+    try {
+      await api.templates.upsert(name, subject, body);
+      notify("テンプレートとして保存しました");
+      onReload();
+    } catch (e: any) { notify(e.message, "error"); }
+  }
+
+  function clearForm() {
+    setSubject(""); setBody(""); setSelectedNfts([]);
+  }
 
   return (
     <>
-      <div className="stats-row">
-        <div className="stat"><div className="num">{members.length}</div><div className="lbl">総メンバー数</div></div>
-        {nftTypes.map((t) => (
-          <div className="stat" key={t}><div className="num">{counts[t] ?? 0}</div><div className="lbl">{t}</div></div>
-        ))}
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">メール送信</h1>
+          <div className="page-sub">メンバーへ一斉メールを配信します。NFT 種別でフィルタ可能。</div>
+        </div>
       </div>
 
       <div className="card">
-        <h2>メール送信
-          <div className="actions">
-            <select onChange={(e) => { if (e.target.value) { applyTemplate(parseInt(e.target.value)); e.target.value = ""; } }}>
-              <option value="">テンプレートから適用…</option>
+        <div className="card-head">
+          <h3>新規メール</h3>
+          <div className="card-head-actions">
+            <select
+              className="select"
+              style={{ width: 200 }}
+              onChange={(e) => { if (e.target.value) { applyTemplate(parseInt(e.target.value)); e.target.value = ""; } }}
+              defaultValue=""
+            >
+              <option value="">テンプレートから挿入…</option>
               {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           </div>
-        </h2>
-
-        <label>送信対象 NFT種別（未選択で全員に送信）</label>
-        <div className="nft-checkboxes">
-          {nftTypes.map((t) => (
-            <label key={t}>
-              <input type="checkbox" checked={selectedNfts.includes(t)} onChange={() => { toggleNft(t); setPreviewCount(null); }} />
-              {t}
-            </label>
-          ))}
         </div>
 
-        <label>件名</label>
-        <input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="例: 【重要】コミュニティからのお知らせ" />
+        <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          <div className="field">
+            <label>送信対象</label>
+            <div className="chip-row">
+              <div className={`chip ${selectedNfts.length === 0 ? "active" : ""}`} onClick={() => setSelectedNfts([])}>
+                すべて <span className="chip-count">· {members.length}</span>
+              </div>
+              {NFT_TYPES.map((t) => (
+                <div key={t} className={`chip ${selectedNfts.includes(t) ? "active" : ""}`} onClick={() => toggleNft(t)}>
+                  {nftLabel(t)} <span className="chip-count">· {counts[t]}</span>
+                </div>
+              ))}
+            </div>
+            <div className="field-hint">未選択は全員に送信されます。複数選択で OR フィルタ。</div>
+          </div>
 
-        <label>本文</label>
-        <p className="hint">※ {`{name}`}・{`{nft_type}`}・{`{email}`} は自動的にメンバー情報に置換されます</p>
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder={"{name} 様\n\nいつもコミュニティをご利用いただきありがとうございます。\n{nft_type} オーナーの皆様へお知らせです。\n\n...\n\n運営チーム"}
-        />
+          <div className="field">
+            <label>件名</label>
+            <input
+              className="input"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="例: 【重要】コミュニティからのお知らせ"
+            />
+          </div>
 
-        <details style={{ marginTop: 14 }}>
-          <summary>プレビュー（メンバー1人目に対する文面）</summary>
-          <div className="preview-pane" style={{ marginTop: 10 }}>{preview}</div>
-        </details>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div className="field">
+              <label>本文</label>
+              <textarea
+                className="textarea"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder={"{name} 様\n\nいつもコミュニティをご利用いただきありがとうございます。\n{nft_type} オーナーの皆様へお知らせです。\n\n…\n\n運営チーム"}
+              />
+              <div className="field-hint">
+                プレースホルダ:
+                <span className="kbd">{"{name}"}</span>
+                <span className="kbd" style={{ marginLeft: 4 }}>{"{nft_type}"}</span>
+                <span className="kbd" style={{ marginLeft: 4 }}>{"{email}"}</span>
+              </div>
+            </div>
+            <div className="field">
+              <label>
+                プレビュー <span style={{ color: "var(--text-4)", fontWeight: 400 }}>({target[0]?.name || "—"} に対する文面)</span>
+              </label>
+              <div className="preview-box" style={{ minHeight: 140, height: "100%" }}>{preview}</div>
+            </div>
+          </div>
+        </div>
 
-        <div style={{ marginTop: 16, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn" disabled={sending} onClick={send}>
-            {sending ? <><span className="spinner" /> 送信中…</> : "📤 送信する"}
-          </button>
-          <button className="btn secondary" onClick={calcPreviewCount}>対象人数を確認</button>
-          <button className="btn secondary" onClick={saveAsTemplate}>💾 テンプレート保存</button>
-          {previewCount != null && <span style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>対象: {previewCount}名</span>}
+        <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, background: "var(--bg-soft)", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: "var(--text-2)" }}>
+            <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{target.length} 名</b> に送信
+          </span>
+          <button className="btn ghost sm" onClick={saveAsTemplate}><I.Save /> テンプレート保存</button>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button className="btn ghost" onClick={clearForm}>クリア</button>
+            <button className="btn primary" disabled={sending} onClick={send}>
+              {sending ? <><span className="spinner" /> 送信中…</> : <><I.Send /> 送信する</>}
+            </button>
+          </div>
         </div>
 
         {job && (
-          <div className="result-box">
-            <div className="result-item">ジョブID <b>{job.id}</b> · 進捗 {job.sent + job.failed}/{job.total} ({jobPct}%)</div>
-            <div className="result-item">✅ 送信成功: {job.sent} / ❌ 失敗: {job.failed} / 状態: {job.status}</div>
-            <div className="progress-bar"><div style={{ width: `${jobPct}%` }} /></div>
+          <div style={{ padding: "16px 20px", borderTop: "1px solid var(--border)", background: "var(--bg-elev)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, marginBottom: 6 }}>
+              <span className="badge badge-info">ジョブ #{job.id}</span>
+              <span style={{ color: "var(--text-2)" }}>{job.sent + job.failed} / {job.total} 配信</span>
+              {job.failed > 0 && <span style={{ color: "var(--danger)" }}>失敗 {job.failed}</span>}
+              <span style={{ marginLeft: "auto", color: "var(--text-3)" }}>
+                {job.status === "done" ? "完了" : "実行中…"}
+              </span>
+            </div>
+            <div className="progress">
+              <div style={{ width: `${job.total ? Math.round(((job.sent + job.failed) / job.total) * 100) : 0}%` }} />
+            </div>
           </div>
         )}
       </div>
+
+      <Modal
+        open={showConfirm}
+        onClose={() => setShowConfirm(false)}
+        title="送信確認"
+        footer={
+          <>
+            <button className="btn ghost" onClick={() => setShowConfirm(false)}>キャンセル</button>
+            <button className="btn primary" onClick={confirmSend}><I.Send /> 送信する</button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 14, lineHeight: 1.7 }}>
+          <p>以下の内容で <b>{target.length} 名</b> に送信します。よろしいですか？</p>
+          <div style={{ marginTop: 14, padding: 14, background: "var(--bg-soft)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>件名</div>
+            <b>{subject || "(未入力)"}</b>
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-3)" }}>対象</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              {(selectedNfts.length === 0 ? (NFT_TYPES as readonly string[]) : selectedNfts).map((t) => (
+                <span key={t} className={`badge ${nftBadgeClass(t)}`}>{nftLabel(t)} · {counts[t]}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Modal>
     </>
   );
 }

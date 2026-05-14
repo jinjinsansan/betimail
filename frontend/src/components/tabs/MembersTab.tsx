@@ -1,57 +1,51 @@
 "use client";
-import { useState, useRef } from "react";
-import { api, API_BASE } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api } from "@/lib/api";
 import type { Member } from "@/lib/types";
-import { nftBadgeClass, debounce } from "@/lib/ui";
+import { NFT_TYPES, nftBadgeClass, nftLabel, memberInitial } from "@/lib/ui";
+import { I } from "@/lib/icons";
+import { Empty, Pager } from "../common";
 import MemberEditModal from "../MemberEditModal";
 
 type Props = {
-  nftTypes: string[];
   members: Member[];
-  notify: (msg: string, err?: boolean) => void;
+  notify: (msg: string, type?: "success" | "error" | "info") => void;
   onReload: () => void;
 };
 
-export default function MembersTab({ nftTypes, members, notify, onReload }: Props) {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [nftType, setNftType] = useState(nftTypes[0] || "");
-  const [joinedDate, setJoinedDate] = useState(new Date().toISOString().split("T")[0]);
-  const [notes, setNotes] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [filterNft, setFilterNft] = useState("");
+const PAGE = 12;
+
+export default function MembersTab({ members, notify, onReload }: Props) {
+  const [filterNft, setFilterNft] = useState<string>("");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const filtered = members.filter((m) => {
-    if (filterNft && m.nft_type !== filterNft) return false;
+  const filtered = useMemo(() => {
+    let list = members;
+    if (filterNft) list = list.filter((m) => m.nft_type === filterNft);
     if (search) {
       const s = search.toLowerCase();
-      if (!m.name.toLowerCase().includes(s) && !m.email.toLowerCase().includes(s)) return false;
+      list = list.filter((m) =>
+        m.name.toLowerCase().includes(s) || m.email.toLowerCase().includes(s));
     }
-    return true;
-  });
+    return list;
+  }, [members, filterNft, search]);
 
-  async function add() {
-    if (!name || !email || !nftType) { notify("名前・メール・NFT種別は必須です", true); return; }
-    setAdding(true);
-    try {
-      await api.members.add({ name, email, nft_type: nftType, joined_date: joinedDate, notes });
-      notify(`${name} を追加しました`);
-      setName(""); setEmail(""); setNotes("");
-      onReload();
-    } catch (e: any) { notify(e.message, true); }
-    finally { setAdding(false); }
-  }
+  useEffect(() => { setPage(0); }, [filterNft, search]);
 
-  async function remove(email: string) {
-    if (!confirm(`${email} を削除しますか？`)) return;
+  const pageCount = Math.ceil(filtered.length / PAGE);
+  const slice = filtered.slice(page * PAGE, (page + 1) * PAGE);
+
+  async function remove(m: Member) {
+    if (!confirm(`${m.email} を削除しますか？`)) return;
     try {
-      await api.members.remove(email);
-      notify("削除しました");
+      await api.members.remove(m.email);
+      notify(`${m.name} を削除しました`);
       onReload();
-    } catch (e: any) { notify(e.message, true); }
+    } catch (e: any) { notify(e.message, "error"); }
   }
 
   async function importCsv(e: React.ChangeEvent<HTMLInputElement>) {
@@ -61,105 +55,113 @@ export default function MembersTab({ nftTypes, members, notify, onReload }: Prop
       const r = await api.members.importCsv(file);
       notify(`${r.added} 件を追加${r.skipped.length ? `（${r.skipped.length} 件スキップ）` : ""}`);
       onReload();
-    } catch (err: any) { notify(err.message, true); }
+    } catch (err: any) { notify(err.message, "error"); }
     finally { if (fileRef.current) fileRef.current.value = ""; }
   }
 
-  function exportCsv() {
-    // Bearer 認証が必要なので fetch でblob取得してダウンロード
-    api.members.list().then(async () => {
+  async function exportCsv() {
+    try {
       const token = localStorage.getItem("betimail_token");
       const res = await fetch(api.members.exportUrl(), { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-      if (!res.ok) { notify("エクスポート失敗", true); return; }
+      if (!res.ok) throw new Error("エクスポート失敗");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url; a.download = "members.csv"; a.click();
       URL.revokeObjectURL(url);
-    });
+      notify("members.csv を書き出しました");
+    } catch (e: any) { notify(e.message, "error"); }
   }
 
   return (
     <>
-      <div className="card">
-        <h2>メンバー追加
-          <div className="actions">
-            <label className="btn secondary small" style={{ margin: 0, cursor: "pointer" }}>
-              📥 CSV取り込み
-              <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={importCsv} />
-            </label>
-            <button className="btn secondary small" onClick={exportCsv}>📤 CSV書き出し</button>
-          </div>
-        </h2>
-        <div className="flex-row">
-          <div>
-            <label>名前</label>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="山田太郎" />
-          </div>
-          <div>
-            <label>メールアドレス</label>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="yamada@example.com" />
-          </div>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">メンバー管理</h1>
+          <div className="page-sub">全 {members.length} 名のメンバー情報を管理。CSV インポート / エクスポート対応。</div>
         </div>
-        <div className="flex-row" style={{ marginTop: 0 }}>
-          <div>
-            <label>NFT種別</label>
-            <select value={nftType} onChange={(e) => setNftType(e.target.value)}>
-              {nftTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          <div>
-            <label>購入日</label>
-            <input type="date" value={joinedDate} onChange={(e) => setJoinedDate(e.target.value)} />
-          </div>
-          <div>
-            <label>備考</label>
-            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="任意" />
-          </div>
+        <div className="page-head-actions">
+          <label className="btn ghost" style={{ cursor: "pointer", margin: 0 }}>
+            <I.Upload /> CSV 取り込み
+            <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={importCsv} />
+          </label>
+          <button className="btn ghost" onClick={exportCsv}><I.Download /> 書き出し</button>
+          <button className="btn primary" onClick={() => setShowAdd(true)}><I.Plus /> メンバー追加</button>
         </div>
-        <button className="btn" style={{ marginTop: 16 }} disabled={adding} onClick={add}>
-          {adding ? <><span className="spinner" /> 追加中…</> : "追加"}
-        </button>
       </div>
 
       <div className="card">
-        <h2>メンバー一覧</h2>
-        <div style={{ marginBottom: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <select value={filterNft} onChange={(e) => setFilterNft(e.target.value)} style={{ width: 220 }}>
-            <option value="">-- すべてのNFT種別 --</option>
-            {nftTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="名前・メールで検索" style={{ width: 240 }} />
-          <span style={{ color: "var(--text-dim)", fontSize: "0.85rem" }}>{filtered.length} 名</span>
-        </div>
-        <table>
-          <thead><tr><th>名前</th><th>メールアドレス</th><th>NFT種別</th><th>購入日</th><th>備考</th><th></th></tr></thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr><td colSpan={6} className="placeholder">メンバーが見つかりません</td></tr>
-            ) : filtered.map((m) => (
-              <tr key={m.email}>
-                <td>{m.name}</td>
-                <td>{m.email}</td>
-                <td><span className={`badge ${nftBadgeClass(m.nft_type)}`}>{m.nft_type || "不明"}</span></td>
-                <td>{m.joined_date || "-"}</td>
-                <td>{m.notes || "-"}</td>
-                <td>
-                  <button className="btn small secondary" onClick={() => setEditing(m.email)}>編集</button>
-                  <button className="btn small danger" style={{ marginLeft: 6 }} onClick={() => remove(m.email)}>削除</button>
-                </td>
-              </tr>
+        <div className="filter-bar">
+          <div className="search-wrap">
+            <I.Search />
+            <input className="input" placeholder="名前・メールで検索…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <div className="chip-row">
+            <div className={`chip ${filterNft === "" ? "active" : ""}`} onClick={() => setFilterNft("")}>すべて</div>
+            {NFT_TYPES.map((t) => (
+              <div key={t} className={`chip ${filterNft === t ? "active" : ""}`} onClick={() => setFilterNft(t)}>
+                {nftLabel(t)}
+              </div>
             ))}
-          </tbody>
-        </table>
+          </div>
+          <span className="count">{filtered.length} 名</span>
+        </div>
+
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>名前</th>
+                <th>メールアドレス</th>
+                <th>NFT種別</th>
+                <th>購入日</th>
+                <th>備考</th>
+                <th style={{ width: 100 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {slice.length === 0 ? (
+                <tr><td colSpan={6}><Empty icon={<I.Users />} title="該当するメンバーがいません" /></td></tr>
+              ) : slice.map((m) => (
+                <tr key={m.email}>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <div className="avatar" style={{ width: 26, height: 26, fontSize: 11, background: "var(--bg-inset)", color: "var(--text-2)" }}>
+                        {memberInitial(m)}
+                      </div>
+                      <b>{m.name}</b>
+                    </div>
+                  </td>
+                  <td>{m.email}</td>
+                  <td><span className={`badge ${nftBadgeClass(m.nft_type)}`}>{nftLabel(m.nft_type)}</span></td>
+                  <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{m.joined_date || "-"}</span></td>
+                  <td>{m.notes ? <span className="badge badge-neutral">{m.notes}</span> : <span style={{ color: "var(--text-4)" }}>—</span>}</td>
+                  <td>
+                    <div className="row-actions">
+                      <button className="btn ghost sm" onClick={() => setEditing(m.email)}><I.Edit /></button>
+                      <button className="btn ghost sm" style={{ color: "var(--danger)" }} onClick={() => remove(m)}><I.Trash /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+            {filtered.length === 0 ? 0 : page * PAGE + 1}–{Math.min((page + 1) * PAGE, filtered.length)} / {filtered.length}
+          </span>
+          <Pager page={page} pageCount={pageCount} onChange={setPage} />
+        </div>
       </div>
 
-      {editing && (
+      {(showAdd || editing) && (
         <MemberEditModal
           email={editing}
-          nftTypes={nftTypes}
-          onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); onReload(); }}
+          mode={editing ? "edit" : "add"}
+          onClose={() => { setShowAdd(false); setEditing(null); }}
+          onSaved={() => { setShowAdd(false); setEditing(null); onReload(); }}
           notify={notify}
         />
       )}

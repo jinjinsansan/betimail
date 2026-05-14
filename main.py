@@ -485,8 +485,9 @@ async def webhook_email(
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Resend webhook は { "type": "...", "data": {...} } の形式が標準だが、
-    # 古いフォーマット (フラット) もサポート。
+    # Resend の email.received webhook はメタデータのみ送信。本文を含むペイロードを
+    # 受け取るには /emails/inbound/{email_id} を別途取得する必要がある。
+    event_type = payload.get("type", "")
     data = payload.get("data", payload)
     sender_email = data.get("from") or data.get("sender") or ""
     sender_name = data.get("from_name") or data.get("sender_name") or ""
@@ -494,6 +495,28 @@ async def webhook_email(
     body_text = data.get("text") or data.get("html") or data.get("body") or ""
     message_id = data.get("message_id") or data.get("id") or ""
     in_reply_to = data.get("in_reply_to") or ""
+    email_id = data.get("email_id") or data.get("id") or ""
+
+    # 本文が無い場合（email.received の webhook はメタデータのみ）、APIで取得
+    if event_type == "email.received" and not body_text and email_id:
+        try:
+            import httpx
+            from config import RESEND_API_KEY
+            r = httpx.get(
+                f"https://api.resend.com/emails/inbound/{email_id}",
+                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                timeout=10.0,
+            )
+            if r.status_code == 200:
+                full = r.json()
+                body_text = full.get("text") or full.get("html") or ""
+                if not message_id:
+                    message_id = full.get("message_id", "")
+                log.info("Fetched inbound body: %d chars", len(body_text))
+            else:
+                log.warning("Inbound fetch failed: HTTP %d %s", r.status_code, r.text[:200])
+        except Exception:
+            log.exception("Failed to fetch inbound email body")
 
     # "from" が "Name <email@x>" 形式の場合の分解
     if "<" in sender_email and ">" in sender_email:
@@ -504,7 +527,7 @@ async def webhook_email(
             sender_email = m.group(2).strip()
 
     if not sender_email or not body_text:
-        log.warning("Webhook ignored: missing sender or body")
+        log.warning("Webhook ignored: missing sender or body (type=%s email_id=%s)", event_type, email_id)
         return JSONResponse({"status": "ignored"})
 
     def process():

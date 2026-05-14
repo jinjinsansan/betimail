@@ -2,8 +2,11 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { clearToken } from "@/lib/auth";
-import type { Member, Template, Health, Approval } from "@/lib/types";
-import Toast from "./Toast";
+import type { Member, Template, Health, Approval, SentEmail, ReceivedEmail, BulkJob } from "@/lib/types";
+import Sidebar, { TabKey } from "./Sidebar";
+import Topbar from "./Topbar";
+import { ToastStack, useToasts } from "./common";
+import DashboardTab from "./tabs/DashboardTab";
 import SendTab from "./tabs/SendTab";
 import ApprovalsTab from "./tabs/ApprovalsTab";
 import TemplatesTab from "./tabs/TemplatesTab";
@@ -11,50 +14,61 @@ import MembersTab from "./tabs/MembersTab";
 import HistoryTab from "./tabs/HistoryTab";
 import JobsTab from "./tabs/JobsTab";
 
-type Tab = "send" | "approvals" | "templates" | "members" | "history" | "jobs";
-
 type Props = { onLogout: () => void };
 
 export default function Dashboard({ onLogout }: Props) {
-  const [tab, setTab] = useState<Tab>("send");
-  const [nftTypes, setNftTypes] = useState<string[]>([]);
+  const [tab, setTab] = useState<TabKey>("dashboard");
   const [members, setMembers] = useState<Member[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
-  const [approvalCount, setApprovalCount] = useState(0);
-  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
-
-  function notify(msg: string, err = false) {
-    setToast({ msg, type: err ? "error" : "success" });
-  }
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [sentEmails, setSentEmails] = useState<SentEmail[]>([]);
+  const [recvEmails, setRecvEmails] = useState<ReceivedEmail[]>([]);
+  const [jobs, setJobs] = useState<BulkJob[]>([]);
+  const { toasts, notify, dismiss } = useToasts();
 
   async function loadAll() {
     try {
-      const [nfts, mems, tmpls, h] = await Promise.all([
-        api.nftTypes(),
+      const [mems, tmpls, h] = await Promise.all([
         api.members.list(),
         api.templates.list(),
         api.health(),
       ]);
-      setNftTypes(nfts);
       setMembers(mems);
       setTemplates(tmpls);
       setHealth(h);
     } catch (e: any) {
-      notify(e.message, true);
+      notify(e.message, "error");
+    }
+  }
+
+  async function loadDashboardData() {
+    try {
+      const [aps, s, r, j] = await Promise.all([
+        api.approvals.list(),
+        api.emails.sent(100, 0, ""),
+        api.emails.received(100, 0, ""),
+        api.send.jobs(),
+      ]);
+      setApprovals(aps);
+      setSentEmails(s.items);
+      setRecvEmails(r.items);
+      setJobs(j);
+    } catch (e: any) {
+      notify(e.message, "error");
     }
   }
 
   async function loadApprovalCount() {
     try {
       const list = await api.approvals.list();
-      setApprovalCount(list.length);
+      setApprovals(list);
     } catch {}
   }
 
   useEffect(() => {
     loadAll();
-    loadApprovalCount();
+    loadDashboardData();
     const handler = () => { clearToken(); onLogout(); };
     window.addEventListener("betimail:unauthorized", handler);
     const interval = setInterval(loadApprovalCount, 10000);
@@ -64,74 +78,67 @@ export default function Dashboard({ onLogout }: Props) {
     };
   }, []);
 
+  // ダッシュボードに切り替えるたびに最新化
+  useEffect(() => {
+    if (tab === "dashboard") loadDashboardData();
+  }, [tab]);
+
   function logout() {
     clearToken();
     onLogout();
   }
 
-  const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: "send", label: "📤 メール送信" },
-    { key: "approvals", label: "⏳ 承認待ち", badge: approvalCount },
-    { key: "templates", label: "📝 テンプレート" },
-    { key: "members", label: "👥 メンバー管理" },
-    { key: "history", label: "📋 送受信履歴" },
-    { key: "jobs", label: "🚚 送信ジョブ" },
-  ];
+  const trails: Record<TabKey, string[]> = {
+    dashboard: ["Betimail", "ダッシュボード"],
+    send: ["Betimail", "メール", "メール送信"],
+    approvals: ["Betimail", "メール", "承認待ち"],
+    members: ["Betimail", "メール", "メンバー管理"],
+    history: ["Betimail", "メール", "送受信履歴"],
+    templates: ["Betimail", "設定", "テンプレート"],
+    jobs: ["Betimail", "設定", "送信ジョブ"],
+  };
 
   return (
     <>
-      <header className="app-header">
-        <h1>⚡ Betimail</h1>
-        <span className="sub">NFTコミュニティ サポートメール管理</span>
-        <div className="right">
-          {health && (
-            <>
-              <span>
-                <span className="badge-dot" style={{ background: health.admin_auth_enabled ? "#4caf50" : "#ff9800" }}></span>
-                {health.admin_auth_enabled ? "認証ON" : "認証OFF (要設定)"}
-              </span>
-              <span>
-                <span className="badge-dot" style={{ background: health.telegram_enabled ? "#4caf50" : "#888" }}></span>
-                Telegram {health.telegram_enabled ? "有効" : "無効"}
-              </span>
-            </>
-          )}
-          <button className="logout" onClick={logout}>ログアウト</button>
+      <div className="shell">
+        <Sidebar
+          current={tab}
+          onNavigate={setTab}
+          approvalCount={approvals.length}
+          health={health}
+          username="運営チーム"
+          onLogout={logout}
+        />
+        <div className="main">
+          <Topbar trail={trails[tab]} />
+          <div className="content">
+            {tab === "dashboard" && (
+              <DashboardTab
+                members={members}
+                approvals={approvals}
+                sent={sentEmails}
+                received={recvEmails}
+                jobs={jobs}
+                onNavigate={setTab}
+              />
+            )}
+            {tab === "send" && (
+              <SendTab
+                members={members}
+                templates={templates}
+                onReload={() => { loadAll(); loadDashboardData(); }}
+                notify={notify}
+              />
+            )}
+            {tab === "approvals" && <ApprovalsTab notify={notify} onChange={loadApprovalCount} />}
+            {tab === "templates" && <TemplatesTab templates={templates} notify={notify} onReload={loadAll} />}
+            {tab === "members" && <MembersTab members={members} notify={notify} onReload={loadAll} />}
+            {tab === "history" && <HistoryTab notify={notify} />}
+            {tab === "jobs" && <JobsTab notify={notify} />}
+          </div>
         </div>
-      </header>
-
-      <nav className="app-nav">
-        {tabs.map((t) => (
-          <button
-            key={t.key}
-            className={tab === t.key ? "active" : ""}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-            {t.badge != null && t.badge > 0 && <span className="count">{t.badge}</span>}
-          </button>
-        ))}
-      </nav>
-
-      <main className="app-main">
-        {tab === "send" && (
-          <SendTab
-            nftTypes={nftTypes}
-            members={members}
-            templates={templates}
-            onReload={loadAll}
-            notify={notify}
-            onJump={(t) => setTab(t as Tab)}
-          />
-        )}
-        {tab === "approvals" && <ApprovalsTab notify={notify} onChange={loadApprovalCount} />}
-        {tab === "templates" && <TemplatesTab templates={templates} notify={notify} onReload={loadAll} />}
-        {tab === "members" && <MembersTab nftTypes={nftTypes} members={members} notify={notify} onReload={loadAll} />}
-        {tab === "history" && <HistoryTab notify={notify} />}
-        {tab === "jobs" && <JobsTab notify={notify} />}
-      </main>
-
-      {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+      </div>
+      <ToastStack toasts={toasts} dismiss={dismiss} />
     </>
   );
 }

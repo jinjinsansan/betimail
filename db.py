@@ -188,6 +188,7 @@ def get_pending_approval(approval_id: int) -> Optional[dict]:
         row = conn.execute(
             """SELECT pa.*, re.sender_email, re.sender_name,
                       re.subject as original_subject, re.body as original_body,
+                      re.ai_confidence as ai_confidence,
                       re.message_id as original_message_id
                FROM pending_approvals pa
                JOIN received_emails re ON pa.received_email_id = re.id
@@ -201,7 +202,8 @@ def list_pending_approvals(limit: int = 50) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """SELECT pa.*, re.sender_email, re.sender_name,
-                      re.subject as original_subject, re.body as original_body
+                      re.subject as original_subject, re.body as original_body,
+                      re.ai_confidence as ai_confidence
                FROM pending_approvals pa
                JOIN received_emails re ON pa.received_email_id = re.id
                WHERE pa.status = 'waiting'

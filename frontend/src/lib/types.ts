@@ -43,6 +43,9 @@ export type Approval = {
   sender_name: string;
   original_subject: string;
   original_body: string;
+  ai_confidence?: number | null;
+  original_message_id?: string | null;
+  telegram_message_id?: number | null;
 };
 
 export type Template = {
