@@ -1,0 +1,76 @@
+import db
+
+
+def test_record_and_get_sent_email():
+    rid = db.record_sent_email(
+        recipient_email="a@example.com", recipient_name="A",
+        nft_type="会員権NFT", subject="hi", body="body",
+        resend_id="r1",
+    )
+    assert rid > 0
+    items = db.get_sent_emails()
+    assert items[0]["recipient_email"] == "a@example.com"
+    assert items[0]["resend_id"] == "r1"
+
+
+def test_received_and_approval_flow():
+    rid = db.record_received_email(
+        sender_email="x@example.com", sender_name="X",
+        subject="?", body="hello", ai_draft="draft", ai_confidence=0.5,
+        message_id="<m@x>",
+    )
+    aid = db.create_pending_approval(received_email_id=rid, ai_draft="draft")
+    a = db.get_pending_approval(aid)
+    assert a["sender_email"] == "x@example.com"
+    assert a["original_message_id"] == "<m@x>"
+    assert a["status"] == "waiting"
+
+    pending = db.list_pending_approvals()
+    assert len(pending) == 1
+
+    db.update_approval_status(aid, "approved", handled_by="me")
+    assert db.list_pending_approvals() == []
+    assert db.get_pending_approval(aid)["status"] == "approved"
+
+
+def test_bulk_job_lifecycle():
+    job_id = db.create_bulk_job(subject="s", body="b", nft_types="[]", total=3)
+    db.increment_bulk_job(job_id, sent_delta=2)
+    db.increment_bulk_job(job_id, failed_delta=1)
+    job = db.get_bulk_job(job_id)
+    assert job["sent"] == 2 and job["failed"] == 1
+    db.finish_bulk_job(job_id)
+    assert db.get_bulk_job(job_id)["status"] == "done"
+
+
+def test_search_pagination():
+    for i in range(7):
+        db.record_sent_email("u" + str(i) + "@x", "U" + str(i), "会員権NFT", f"件名{i}", "b")
+    assert db.count_sent_emails() == 7
+    page = db.get_sent_emails(limit=3, offset=0)
+    assert len(page) == 3
+    page2 = db.get_sent_emails(limit=3, offset=3)
+    assert len(page2) == 3
+    hits = db.get_sent_emails(search="件名1")
+    assert len(hits) == 1
+
+
+def test_templates_upsert_delete():
+    tid = db.upsert_template("t1", "subj", "body")
+    assert tid > 0
+    db.upsert_template("t1", "subj2", "body2")  # update
+    items = db.list_templates()
+    assert len(items) == 1
+    assert items[0]["subject"] == "subj2"
+    assert db.delete_template(tid) is True
+    assert db.list_templates() == []
+
+
+def test_get_recent_exchange_ordering():
+    db.record_received_email("x@y", "X", "1st", "hello 1")
+    db.record_sent_email("x@y", "X", "", "re: 1st", "reply 1")
+    db.record_received_email("x@y", "X", "2nd", "hello 2")
+    history = db.get_recent_exchange("x@y", limit=5)
+    # 時系列順 (古い→新しい)
+    bodies = [h["body"] for h in history]
+    assert bodies == ["hello 1", "reply 1", "hello 2"]

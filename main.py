@@ -1,88 +1,238 @@
+"""FastAPI エントリポイント。"""
 import asyncio
-import threading
 import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, HTTPException, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from datetime import date
 from typing import Optional
+
+from fastapi import (
+    FastAPI, Request, HTTPException, BackgroundTasks, Depends, Response,
+    UploadFile, File,
+)
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from logging_config import setup_logging, get_logger
+
+setup_logging()
+log = get_logger(__name__)
 
 import db
 import members as mbr
 import mail
 import ai
 import telegram_bot
-from config import NFT_TYPES, TELEGRAM_BOT_TOKEN
+from auth import require_admin, admin_configured
+from ratelimit import limit_webhook, limit_send
+from webhook import verify_webhook_request
+from config import NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
-    # Telegram Botをバックグラウンドスレッドで起動
+    if not admin_configured():
+        log.warning("ADMIN_PASSWORD が未設定です。管理画面はパブリックアクセス可能になっています。")
+    bot_thread = None
     if TELEGRAM_BOT_TOKEN:
-        def run_bot():
-            telegram_app = telegram_bot.build_application()
-            telegram_app.run_polling(stop_signals=None)
-
-        thread = threading.Thread(target=run_bot, daemon=True)
-        thread.start()
-    yield
+        bot_thread = telegram_bot.start_bot_thread()
+    try:
+        yield
+    finally:
+        try:
+            await telegram_bot.shutdown_bot()
+        except Exception:
+            log.exception("Shutdown failure")
 
 
 app = FastAPI(title="Betimail - NFTコミュニティサポート", lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
 
 
-# ── 管理画面 ──────────────────────────────────────────────
+# ── 画面 ────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+async def index(request: Request, _user: str = Depends(require_admin)):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "admin_auth_enabled": admin_configured(),
+        "telegram_enabled": bool(TELEGRAM_BOT_TOKEN),
+    }
+
+
 # ── メンバーAPI ─────────────────────────────────────────
+class MemberCreate(BaseModel):
+    name: str = Field(min_length=1)
+    email: EmailStr
+    nft_type: str
+    joined_date: str = ""
+    notes: str = ""
+
+    @field_validator("nft_type")
+    @classmethod
+    def validate_nft(cls, v: str) -> str:
+        if v not in NFT_TYPES:
+            raise ValueError(f"不正なNFT種別: {v}")
+        return v
+
+    @field_validator("joined_date")
+    @classmethod
+    def validate_date(cls, v: str) -> str:
+        if not v:
+            return v
+        try:
+            date.fromisoformat(v)
+        except ValueError:
+            raise ValueError("日付は YYYY-MM-DD 形式で指定してください")
+        return v
+
+
+class MemberUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    nft_type: Optional[str] = None
+    joined_date: Optional[str] = None
+    notes: Optional[str] = None
+
+    @field_validator("nft_type")
+    @classmethod
+    def validate_nft(cls, v):
+        if v is None:
+            return v
+        if v not in NFT_TYPES:
+            raise ValueError(f"不正なNFT種別: {v}")
+        return v
+
+
 @app.get("/api/members")
-async def api_get_members(nft_type: Optional[str] = None):
+async def api_get_members(nft_type: Optional[str] = None, _user: str = Depends(require_admin)):
     if nft_type:
         return mbr.get_members_by_nft_type(nft_type)
     return mbr.get_all_members()
 
 
-class MemberCreate(BaseModel):
-    name: str
-    email: str
-    nft_type: str
-    joined_date: str
-    notes: str = ""
-
-
 @app.post("/api/members")
-async def api_add_member(body: MemberCreate):
+async def api_add_member(body: MemberCreate, bg: BackgroundTasks, _user: str = Depends(require_admin)):
     try:
         member = mbr.add_member(**body.model_dump())
-        return member
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    if SEND_WELCOME_EMAIL:
+        def _welcome():
+            try:
+                subject = "ご加入ありがとうございます"
+                body_text = (
+                    f"{member['name']} 様\n\n"
+                    f"NFTコミュニティへのご加入、誠にありがとうございます。\n"
+                    f"保有NFT: {member['nft_type']}\n\n"
+                    f"今後ともよろしくお願いいたします。\n\n"
+                    f"運営チーム"
+                )
+                resend_id = mail.send_email(member["email"], member["name"], subject, body_text)
+                db.record_sent_email(
+                    recipient_email=member["email"],
+                    recipient_name=member["name"],
+                    nft_type=member["nft_type"],
+                    subject=subject,
+                    body=body_text,
+                    resend_id=resend_id,
+                )
+            except Exception:
+                log.exception("Welcome email failure for %s", member["email"])
+        bg.add_task(_welcome)
+    return member
+
+
+@app.put("/api/members/{email:path}")
+async def api_update_member(email: str, body: MemberUpdate, _user: str = Depends(require_admin)):
+    payload = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not payload:
+        raise HTTPException(status_code=400, detail="更新項目が指定されていません")
+    try:
+        updated = mbr.update_member(email, **payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not updated:
+        raise HTTPException(status_code=404, detail="メンバーが見つかりません")
+    return updated
+
 
 @app.delete("/api/members/{email:path}")
-async def api_delete_member(email: str):
-    ok = mbr.delete_member(email)
-    if not ok:
+async def api_delete_member(email: str, _user: str = Depends(require_admin)):
+    if not mbr.delete_member(email):
         raise HTTPException(status_code=404, detail="メンバーが見つかりません")
     return {"status": "deleted"}
 
 
-# ── メール送信API ────────────────────────────────────────
-class SendEmailRequest(BaseModel):
-    nft_types: list[str] = []   # 空の場合は全員
-    subject: str
+@app.get("/api/members/{email:path}/history")
+async def api_member_history(email: str, _user: str = Depends(require_admin)):
+    member = mbr.get_member_by_email(email)
+    if not member:
+        raise HTTPException(status_code=404, detail="メンバーが見つかりません")
+    history = db.get_member_history(email)
+    return {"member": member, **history}
+
+
+@app.post("/api/members/import")
+async def api_import_members(file: UploadFile = File(...), _user: str = Depends(require_admin)):
+    content = (await file.read()).decode("utf-8-sig")
+    return mbr.import_csv(content)
+
+
+@app.get("/api/members/export.csv")
+async def api_export_members(_user: str = Depends(require_admin)):
+    return PlainTextResponse(
+        mbr.export_csv(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="members.csv"'},
+    )
+
+
+# ── プレビュー ──────────────────────────────────────────
+class PreviewRequest(BaseModel):
     body: str
+    sample: dict = {}
+
+
+@app.post("/api/preview")
+async def api_preview(body: PreviewRequest, _user: str = Depends(require_admin)):
+    """{name}/{nft_type}/{email} をサンプル値で置換した結果を返す。"""
+    members = mbr.get_all_members()
+    sample = body.sample if body.sample else (members[0] if members else {
+        "name": "サンプル太郎", "email": "sample@example.com", "nft_type": "会員権NFT",
+    })
+    try:
+        rendered = body.body.format(
+            name=sample.get("name", ""),
+            nft_type=sample.get("nft_type", ""),
+            email=sample.get("email", ""),
+        )
+    except KeyError as e:
+        raise HTTPException(status_code=400, detail=f"未知のプレースホルダ: {e}")
+    return {"rendered": rendered, "sample": sample}
+
+
+# ── 一括送信 ────────────────────────────────────────────
+class SendEmailRequest(BaseModel):
+    nft_types: list[str] = []
+    subject: str = Field(min_length=1)
+    body: str = Field(min_length=1)
 
 
 @app.post("/api/send")
-async def api_send_email(body: SendEmailRequest, bg: BackgroundTasks):
+async def api_send_email(
+    body: SendEmailRequest,
+    bg: BackgroundTasks,
+    request: Request,
+    _rl=Depends(limit_send),
+    _user: str = Depends(require_admin),
+):
     if body.nft_types:
         recipients = []
         for nft_type in body.nft_types:
@@ -93,139 +243,306 @@ async def api_send_email(body: SendEmailRequest, bg: BackgroundTasks):
     if not recipients:
         raise HTTPException(status_code=400, detail="送信先メンバーが見つかりません")
 
+    job_id = db.create_bulk_job(
+        subject=body.subject,
+        body=body.body,
+        nft_types=json.dumps(body.nft_types, ensure_ascii=False),
+        total=len(recipients),
+    )
+
+    def _on_result(member: dict, status: str, entry: dict):
+        if status == "sent":
+            db.record_sent_email(
+                recipient_email=member["email"],
+                recipient_name=member.get("name", ""),
+                nft_type=member.get("nft_type", ""),
+                subject=body.subject,
+                body=entry.get("body", body.body),
+                resend_id=entry.get("id"),
+                bulk_job_id=job_id,
+                status="sent",
+            )
+            db.increment_bulk_job(job_id, sent_delta=1)
+        else:
+            db.record_sent_email(
+                recipient_email=member["email"],
+                recipient_name=member.get("name", ""),
+                nft_type=member.get("nft_type", ""),
+                subject=body.subject,
+                body=entry.get("body", body.body),
+                bulk_job_id=job_id,
+                status="error",
+                error=entry.get("error", ""),
+            )
+            db.increment_bulk_job(job_id, failed_delta=1)
+
     def do_send():
-        results = mail.send_bulk_emails(recipients, body.subject, body.body)
-        for r, member in zip(results, recipients):
-            if r["status"] == "sent":
-                db.record_sent_email(
-                    recipient_email=member["email"],
-                    recipient_name=member["name"],
-                    nft_type=member["nft_type"],
-                    subject=body.subject,
-                    body=body.body.format(
-                        name=member.get("name", ""),
-                        nft_type=member.get("nft_type", ""),
-                        email=member.get("email", ""),
-                    ),
-                )
+        try:
+            mail.send_bulk_emails(recipients, body.subject, body.body, on_result=_on_result)
+        finally:
+            db.finish_bulk_job(job_id)
 
     bg.add_task(do_send)
-    return {"status": "sending", "count": len(recipients)}
+    return {"status": "started", "job_id": job_id, "count": len(recipients)}
 
 
-# ── メール履歴API ────────────────────────────────────────
+@app.get("/api/send/jobs")
+async def api_list_jobs(_user: str = Depends(require_admin)):
+    return db.list_bulk_jobs()
+
+
+@app.get("/api/send/jobs/{job_id}")
+async def api_get_job(job_id: int, _user: str = Depends(require_admin)):
+    job = db.get_bulk_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="ジョブが見つかりません")
+    return job
+
+
+# ── 履歴 ────────────────────────────────────────────────
 @app.get("/api/emails/sent")
-async def api_sent_emails():
-    return db.get_sent_emails()
+async def api_sent_emails(
+    limit: int = 50, offset: int = 0, search: str = "",
+    _user: str = Depends(require_admin),
+):
+    return {
+        "items": db.get_sent_emails(limit=limit, offset=offset, search=search),
+        "total": db.count_sent_emails(search=search),
+    }
 
 
 @app.get("/api/emails/received")
-async def api_received_emails():
-    return db.get_received_emails()
+async def api_received_emails(
+    limit: int = 50, offset: int = 0, search: str = "",
+    _user: str = Depends(require_admin),
+):
+    return {
+        "items": db.get_received_emails(limit=limit, offset=offset, search=search),
+        "total": db.count_received_emails(search=search),
+    }
 
 
-# ── NFT種別一覧 ──────────────────────────────────────────
+# ── NFT種別 ─────────────────────────────────────────────
 @app.get("/api/nft-types")
-async def api_nft_types():
+async def api_nft_types(_user: str = Depends(require_admin)):
     return NFT_TYPES
 
 
-# ── Resend Webhook（メール受信）─────────────────────────
-@app.post("/webhook/email")
-async def webhook_email(request: Request, bg: BackgroundTasks):
-    """
-    Resend の inbound email webhook を受け取る。
-    Resend ダッシュボードで Inbound Routing の Webhook URL をこのエンドポイントに設定してください。
-    """
+# ── 承認 ────────────────────────────────────────────────
+@app.get("/api/approvals")
+async def api_list_approvals(_user: str = Depends(require_admin)):
+    return db.list_pending_approvals()
+
+
+@app.get("/api/approvals/{approval_id}")
+async def api_get_approval(approval_id: int, _user: str = Depends(require_admin)):
+    a = db.get_pending_approval(approval_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="承認データが見つかりません")
+    return a
+
+
+class ApprovalAction(BaseModel):
+    body: Optional[str] = None  # edit時の本文
+
+
+@app.post("/api/approvals/{approval_id}/approve")
+async def api_approve(approval_id: int, body: ApprovalAction, user: str = Depends(require_admin)):
+    return _process_approval(approval_id, "approve", body.body, user)
+
+
+@app.post("/api/approvals/{approval_id}/edit")
+async def api_edit(approval_id: int, body: ApprovalAction, user: str = Depends(require_admin)):
+    if not body.body:
+        raise HTTPException(status_code=400, detail="本文を指定してください")
+    return _process_approval(approval_id, "edit", body.body, user)
+
+
+@app.post("/api/approvals/{approval_id}/reject")
+async def api_reject(approval_id: int, user: str = Depends(require_admin)):
+    return _process_approval(approval_id, "reject", None, user)
+
+
+def _process_approval(approval_id: int, action: str, body_override: Optional[str], user: str) -> dict:
+    approval = db.get_pending_approval(approval_id)
+    if not approval:
+        raise HTTPException(status_code=404, detail="承認データが見つかりません")
+    if approval["status"] != "waiting":
+        raise HTTPException(status_code=409, detail=f"既に処理済み (status: {approval['status']})")
+
+    if action == "reject":
+        db.update_approval_status(approval_id, "rejected", handled_by=user)
+        return {"status": "rejected"}
+
+    final_body = body_override if action == "edit" else approval["ai_draft"]
     try:
-        payload = await request.json()
+        mail.send_reply(
+            to_email=approval["sender_email"],
+            to_name=approval["sender_name"] or "",
+            original_subject=approval["original_subject"] or "",
+            body=final_body,
+            in_reply_to_message_id=approval.get("original_message_id"),
+        )
+    except Exception as e:
+        log.exception("Approval send failure")
+        raise HTTPException(status_code=500, detail=f"送信エラー: {e}")
+
+    db.record_sent_email(
+        recipient_email=approval["sender_email"],
+        recipient_name=approval["sender_name"] or "",
+        nft_type="",
+        subject=f"Re: {approval['original_subject'] or ''}",
+        body=final_body,
+    )
+    new_status = "approved_edited" if action == "edit" else "approved"
+    db.update_approval_status(approval_id, new_status, handled_by=user)
+    return {"status": new_status}
+
+
+# ── テンプレート ────────────────────────────────────────
+class TemplateUpsert(BaseModel):
+    name: str = Field(min_length=1)
+    subject: str = Field(min_length=1)
+    body: str = Field(min_length=1)
+
+
+@app.get("/api/templates")
+async def api_list_templates(_user: str = Depends(require_admin)):
+    return db.list_templates()
+
+
+@app.post("/api/templates")
+async def api_upsert_template(body: TemplateUpsert, _user: str = Depends(require_admin)):
+    tid = db.upsert_template(body.name, body.subject, body.body)
+    return {"id": tid}
+
+
+@app.delete("/api/templates/{template_id}")
+async def api_delete_template(template_id: int, _user: str = Depends(require_admin)):
+    if not db.delete_template(template_id):
+        raise HTTPException(status_code=404, detail="テンプレートが見つかりません")
+    return {"status": "deleted"}
+
+
+# ── Resend Webhook ─────────────────────────────────────
+@app.post("/webhook/email")
+async def webhook_email(
+    request: Request,
+    bg: BackgroundTasks,
+    _rl=Depends(limit_webhook),
+):
+    """Resend inbound email webhook。"""
+    body_bytes = await verify_webhook_request(request)
+    try:
+        payload = json.loads(body_bytes.decode("utf-8"))
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    # Resend inbound email payload の主要フィールドを取得
-    sender_email = payload.get("from", "")
-    sender_name = payload.get("from_name", "")
-    subject = payload.get("subject", "")
-    body = payload.get("text", payload.get("html", ""))
+    # Resend webhook は { "type": "...", "data": {...} } の形式が標準だが、
+    # 古いフォーマット (フラット) もサポート。
+    data = payload.get("data", payload)
+    sender_email = data.get("from") or data.get("sender") or ""
+    sender_name = data.get("from_name") or data.get("sender_name") or ""
+    subject = data.get("subject", "")
+    body_text = data.get("text") or data.get("html") or data.get("body") or ""
+    message_id = data.get("message_id") or data.get("id") or ""
+    in_reply_to = data.get("in_reply_to") or ""
 
-    if not sender_email or not body:
+    # "from" が "Name <email@x>" 形式の場合の分解
+    if "<" in sender_email and ">" in sender_email:
+        import re as _re
+        m = _re.match(r"\s*(.*?)\s*<([^>]+)>\s*", sender_email)
+        if m:
+            sender_name = sender_name or m.group(1).strip().strip('"')
+            sender_email = m.group(2).strip()
+
+    if not sender_email or not body_text:
+        log.warning("Webhook ignored: missing sender or body")
         return JSONResponse({"status": "ignored"})
 
     def process():
-        # 送信者がメンバーか確認
         member = mbr.get_member_by_email(sender_email)
         nft_type = member["nft_type"] if member else "不明"
 
-        # AI返信生成
+        history = db.get_recent_exchange(sender_email)
+
         try:
             result = ai.generate_reply(
                 sender_name=sender_name,
                 sender_email=sender_email,
                 nft_type=nft_type,
                 original_subject=subject,
-                original_body=body,
+                original_body=body_text,
+                history=history,
             )
         except Exception as e:
+            log.exception("AI generation failure")
             result = {
-                "reply": "",
-                "confidence": 0.0,
-                "needs_human": True,
-                "reason": f"AI生成エラー: {e}",
+                "reply": "", "confidence": 0.0,
+                "needs_human": True, "reason": f"AI生成エラー: {e}",
             }
 
-        # DBに記録
         received_id = db.record_received_email(
             sender_email=sender_email,
             sender_name=sender_name,
             subject=subject,
-            body=body,
+            body=body_text,
             ai_draft=result.get("reply", ""),
             ai_confidence=result.get("confidence"),
+            message_id=message_id,
+            in_reply_to=in_reply_to,
         )
 
         if result.get("needs_human"):
-            # 管理者にTelegram通知（承認待ち）
             approval_id = db.create_pending_approval(
                 received_email_id=received_id,
                 ai_draft=result.get("reply", ""),
             )
-            telegram_bot.send_notification_sync(
+            msg_id = telegram_bot.send_notification_sync(
                 approval_id=approval_id,
                 sender_name=sender_name,
                 sender_email=sender_email,
                 original_subject=subject,
-                original_body=body,
+                original_body=body_text,
                 ai_draft=result.get("reply", ""),
                 reason=result.get("reason", ""),
             )
+            if msg_id:
+                db.update_approval_telegram_message(approval_id, msg_id)
         else:
-            # AIが自信を持って回答できる場合は自動送信
             try:
-                mail.send_email(
+                mail.send_reply(
                     to_email=sender_email,
                     to_name=sender_name,
+                    original_subject=subject,
+                    body=result["reply"],
+                    in_reply_to_message_id=message_id,
+                )
+                db.record_sent_email(
+                    recipient_email=sender_email,
+                    recipient_name=sender_name,
+                    nft_type=nft_type,
                     subject=f"Re: {subject}",
                     body=result["reply"],
                 )
-                db.update_approval_status(
-                    db.create_pending_approval(received_id, result["reply"]),
-                    "auto_sent",
-                )
+                db.update_received_status(received_id, "auto_sent")
             except Exception as e:
-                # 送信失敗時はTelegram通知にフォールバック
+                log.exception("Auto reply send failure")
                 approval_id = db.create_pending_approval(
                     received_email_id=received_id,
                     ai_draft=result.get("reply", ""),
                 )
-                telegram_bot.send_notification_sync(
+                msg_id = telegram_bot.send_notification_sync(
                     approval_id=approval_id,
                     sender_name=sender_name,
                     sender_email=sender_email,
                     original_subject=subject,
-                    original_body=body,
+                    original_body=body_text,
                     ai_draft=result.get("reply", ""),
                     reason=f"自動送信エラー（要確認）: {e}",
                 )
+                if msg_id:
+                    db.update_approval_telegram_message(approval_id, msg_id)
 
     bg.add_task(process)
     return {"status": "received"}

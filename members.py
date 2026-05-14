@@ -1,21 +1,47 @@
 import csv
 import os
+import re
+import threading
 from typing import Optional
 from config import MEMBERS_CSV_PATH, NFT_TYPES
+from logging_config import get_logger
+
+log = get_logger(__name__)
+
+_FIELDS = ["name", "email", "nft_type", "joined_date", "notes"]
+_lock = threading.RLock()
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def _ensure_csv():
+def _ensure_csv() -> None:
     if not os.path.exists(MEMBERS_CSV_PATH):
         os.makedirs(os.path.dirname(MEMBERS_CSV_PATH), exist_ok=True)
         with open(MEMBERS_CSV_PATH, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=["name", "email", "nft_type", "joined_date", "notes"])
+            writer = csv.DictWriter(f, fieldnames=_FIELDS)
             writer.writeheader()
 
 
+def _normalize_email(email: str) -> str:
+    return email.strip().lower()
+
+
+def _validate(name: str, email: str, nft_type: str, joined_date: str) -> None:
+    if not name.strip():
+        raise ValueError("名前は必須です")
+    if not _EMAIL_RE.match(email):
+        raise ValueError(f"メールアドレスの形式が不正です: {email}")
+    if nft_type not in NFT_TYPES:
+        raise ValueError(f"不正なNFT種別: {nft_type}")
+    if joined_date and not _DATE_RE.match(joined_date):
+        raise ValueError(f"日付は YYYY-MM-DD 形式で指定してください: {joined_date}")
+
+
 def get_all_members() -> list[dict]:
-    _ensure_csv()
-    with open(MEMBERS_CSV_PATH, "r", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+    with _lock:
+        _ensure_csv()
+        with open(MEMBERS_CSV_PATH, "r", encoding="utf-8") as f:
+            return list(csv.DictReader(f))
 
 
 def get_members_by_nft_type(nft_type: str) -> list[dict]:
@@ -23,46 +49,100 @@ def get_members_by_nft_type(nft_type: str) -> list[dict]:
 
 
 def get_member_by_email(email: str) -> Optional[dict]:
+    target = _normalize_email(email)
     for m in get_all_members():
-        if m["email"].strip().lower() == email.strip().lower():
+        if _normalize_email(m["email"]) == target:
             return m
     return None
 
 
 def add_member(name: str, email: str, nft_type: str, joined_date: str, notes: str = "") -> dict:
-    if nft_type not in NFT_TYPES:
-        raise ValueError(f"不正なNFT種別: {nft_type}")
-    member = {"name": name, "email": email, "nft_type": nft_type, "joined_date": joined_date, "notes": notes}
-    _ensure_csv()
-    with open(MEMBERS_CSV_PATH, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["name", "email", "nft_type", "joined_date", "notes"])
-        writer.writerow(member)
-    return member
+    name = name.strip()
+    email = email.strip()
+    _validate(name, email, nft_type, joined_date)
+    with _lock:
+        existing = get_member_by_email(email)
+        if existing:
+            raise ValueError(f"このメールアドレスは既に登録されています: {email}")
+        member = {
+            "name": name, "email": email, "nft_type": nft_type,
+            "joined_date": joined_date, "notes": notes,
+        }
+        _ensure_csv()
+        with open(MEMBERS_CSV_PATH, "a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_FIELDS)
+            writer.writerow(member)
+        log.info("Added member: %s <%s> [%s]", name, email, nft_type)
+        return member
 
 
 def delete_member(email: str) -> bool:
-    members = get_all_members()
-    new_members = [m for m in members if m["email"].strip().lower() != email.strip().lower()]
-    if len(new_members) == len(members):
-        return False
-    with open(MEMBERS_CSV_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["name", "email", "nft_type", "joined_date", "notes"])
-        writer.writeheader()
-        writer.writerows(new_members)
-    return True
+    target = _normalize_email(email)
+    with _lock:
+        members = get_all_members()
+        new_members = [m for m in members if _normalize_email(m["email"]) != target]
+        if len(new_members) == len(members):
+            return False
+        with open(MEMBERS_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_FIELDS)
+            writer.writeheader()
+            writer.writerows(new_members)
+        log.info("Deleted member: %s", email)
+        return True
 
 
 def update_member(email: str, **kwargs) -> Optional[dict]:
-    members = get_all_members()
-    updated = None
-    for m in members:
-        if m["email"].strip().lower() == email.strip().lower():
-            m.update({k: v for k, v in kwargs.items() if k in m})
-            updated = m
-    if updated is None:
-        return None
-    with open(MEMBERS_CSV_PATH, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["name", "email", "nft_type", "joined_date", "notes"])
-        writer.writeheader()
-        writer.writerows(members)
-    return updated
+    target = _normalize_email(email)
+    with _lock:
+        members = get_all_members()
+        updated = None
+        for m in members:
+            if _normalize_email(m["email"]) == target:
+                # 更新前にバリデーション
+                merged = {**m, **{k: v for k, v in kwargs.items() if k in _FIELDS and v is not None}}
+                _validate(merged["name"], merged["email"], merged["nft_type"], merged.get("joined_date", ""))
+                # メールアドレスを変更しようとしている場合、重複チェック
+                if _normalize_email(merged["email"]) != target:
+                    if any(_normalize_email(o["email"]) == _normalize_email(merged["email"])
+                           for o in members if o is not m):
+                        raise ValueError(f"このメールアドレスは既に使われています: {merged['email']}")
+                m.update(merged)
+                updated = m
+        if updated is None:
+            return None
+        with open(MEMBERS_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=_FIELDS)
+            writer.writeheader()
+            writer.writerows(members)
+        log.info("Updated member: %s", email)
+        return updated
+
+
+def import_csv(file_content: str) -> dict:
+    """CSV文字列を取り込んで、重複・形式エラーをスキップしつつ追加する。"""
+    import io
+    reader = csv.DictReader(io.StringIO(file_content))
+    added = 0
+    skipped: list[dict] = []
+    for row in reader:
+        try:
+            add_member(
+                name=row.get("name", ""),
+                email=row.get("email", ""),
+                nft_type=row.get("nft_type", ""),
+                joined_date=row.get("joined_date", ""),
+                notes=row.get("notes", ""),
+            )
+            added += 1
+        except ValueError as e:
+            skipped.append({"row": row, "reason": str(e)})
+    return {"added": added, "skipped": skipped}
+
+
+def export_csv() -> str:
+    import io
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=_FIELDS)
+    writer.writeheader()
+    writer.writerows(get_all_members())
+    return buf.getvalue()

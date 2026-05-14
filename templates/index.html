@@ -6,30 +6,56 @@
 <title>Betimail - NFTコミュニティサポート</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Helvetica Neue', Arial, sans-serif; background: #0f0f1a; color: #e0e0e0; min-height: 100vh; }
-  header { background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 18px 32px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid #2a2a4a; }
-  header h1 { font-size: 1.4rem; color: #7c5cbf; letter-spacing: 1px; }
-  header span { font-size: 0.85rem; color: #888; }
-  nav { background: #13131f; border-bottom: 1px solid #2a2a4a; display: flex; gap: 4px; padding: 0 24px; }
-  nav button { background: none; border: none; color: #999; padding: 14px 20px; cursor: pointer; font-size: 0.9rem; border-bottom: 3px solid transparent; transition: all 0.2s; }
-  nav button.active, nav button:hover { color: #a070ff; border-bottom-color: #a070ff; }
-  main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
-  .card { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 24px; margin-bottom: 24px; }
-  .card h2 { font-size: 1rem; color: #a070ff; margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; }
+  :root {
+    --bg: #0f0f1a;
+    --bg-card: #1a1a2e;
+    --bg-input: #0f0f1a;
+    --border: #2a2a4a;
+    --border-strong: #3a3a5a;
+    --text: #e0e0e0;
+    --text-dim: #888;
+    --text-faint: #555;
+    --accent: #a070ff;
+    --accent-bg: #7c5cbf;
+    --accent-bg-hover: #9b7de0;
+    --danger: #c0392b;
+    --danger-hover: #e74c3c;
+    --success: #4caf50;
+    --warning: #ff9800;
+    --error: #f44336;
+  }
+  body { font-family: 'Helvetica Neue', 'Hiragino Sans', 'Yu Gothic UI', Arial, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: linear-gradient(135deg, #1a1a2e, #16213e); padding: 18px 32px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 1.4rem; color: var(--accent-bg); letter-spacing: 1px; }
+  header span.sub { font-size: 0.85rem; color: var(--text-dim); }
+  header .health { margin-left: auto; font-size: 0.78rem; color: var(--text-dim); display: flex; gap: 12px; align-items: center; }
+  header .health .badge-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  nav { background: #13131f; border-bottom: 1px solid var(--border); display: flex; gap: 4px; padding: 0 24px; overflow-x: auto; }
+  nav button { background: none; border: none; color: #999; padding: 14px 18px; cursor: pointer; font-size: 0.9rem; border-bottom: 3px solid transparent; transition: all 0.2s; white-space: nowrap; position: relative; }
+  nav button.active, nav button:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  nav button .count { background: var(--accent-bg); color: #fff; border-radius: 10px; padding: 1px 8px; font-size: 0.7rem; margin-left: 6px; }
+  main { max-width: 1200px; margin: 32px auto; padding: 0 24px 80px; }
+  .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 24px; }
+  .card h2 { font-size: 1rem; color: var(--accent); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 1px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .actions { margin-left: auto; display: flex; gap: 8px; }
   .tab-content { display: none; } .tab-content.active { display: block; }
   label { display: block; font-size: 0.82rem; color: #aaa; margin-bottom: 4px; margin-top: 12px; }
-  input, select, textarea { width: 100%; background: #0f0f1a; border: 1px solid #3a3a5a; border-radius: 8px; padding: 10px 12px; color: #e0e0e0; font-size: 0.9rem; outline: none; transition: border-color 0.2s; }
-  input:focus, select:focus, textarea:focus { border-color: #7c5cbf; }
-  textarea { resize: vertical; min-height: 120px; font-family: inherit; }
-  button.btn { background: #7c5cbf; color: #fff; border: none; border-radius: 8px; padding: 10px 22px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s; }
-  button.btn:hover { background: #9b7de0; }
-  button.btn.danger { background: #c0392b; } button.btn.danger:hover { background: #e74c3c; }
-  button.btn.secondary { background: #2a2a4a; } button.btn.secondary:hover { background: #3a3a6a; }
+  input, select, textarea { width: 100%; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px 12px; color: var(--text); font-size: 0.9rem; outline: none; transition: border-color 0.2s; font-family: inherit; }
+  input:focus, select:focus, textarea:focus { border-color: var(--accent-bg); }
+  textarea { resize: vertical; min-height: 120px; font-family: 'Hiragino Sans', 'Yu Gothic UI', sans-serif; }
+  textarea.mono { font-family: monospace; }
+  button.btn { background: var(--accent-bg); color: #fff; border: none; border-radius: 8px; padding: 10px 22px; cursor: pointer; font-size: 0.9rem; transition: background 0.2s; }
+  button.btn:hover:not(:disabled) { background: var(--accent-bg-hover); }
+  button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.btn.small { padding: 4px 12px; font-size: 0.78rem; }
+  button.btn.danger { background: var(--danger); } button.btn.danger:hover:not(:disabled) { background: var(--danger-hover); }
+  button.btn.secondary { background: #2a2a4a; } button.btn.secondary:hover:not(:disabled) { background: #3a3a6a; }
+  button.btn.success { background: var(--success); }
   .nft-checkboxes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
-  .nft-checkboxes label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.88rem; color: #ccc; margin: 0; background: #0f0f1a; border: 1px solid #3a3a5a; border-radius: 6px; padding: 6px 12px; }
+  .nft-checkboxes label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.88rem; color: #ccc; margin: 0; background: var(--bg-input); border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 12px; }
   .nft-checkboxes input[type=checkbox] { width: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-  th { text-align: left; color: #888; font-weight: 500; padding: 10px 12px; border-bottom: 1px solid #2a2a4a; }
+  th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 10px 12px; border-bottom: 1px solid var(--border); }
   td { padding: 10px 12px; border-bottom: 1px solid #1e1e38; vertical-align: top; }
   tr:hover td { background: #1e1e38; }
   .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 500; }
@@ -37,46 +63,83 @@
   .badge.pachi { background: #3a1a4a; color: #ce93d8; }
   .badge.lucky { background: #1a3a1a; color: #81c784; }
   .badge.special { background: #3a2a1a; color: #ffb74d; }
-  .badge.unknown { background: #2a2a2a; color: #888; }
+  .badge.unknown { background: #2a2a2a; color: var(--text-dim); }
   .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-  .dot-sent { background: #4caf50; } .dot-error { background: #f44336; } .dot-pending { background: #ff9800; }
-  .result-box { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 14px; margin-top: 14px; font-size: 0.85rem; max-height: 240px; overflow-y: auto; }
+  .dot-sent { background: var(--success); } .dot-error { background: var(--error); } .dot-pending { background: var(--warning); }
+  .dot-info { background: #4fc3f7; }
+  .result-box { background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-top: 14px; font-size: 0.85rem; max-height: 280px; overflow-y: auto; }
   .result-item { padding: 4px 0; border-bottom: 1px solid #1e1e38; }
   .result-item:last-child { border-bottom: none; }
   .hint { font-size: 0.78rem; color: #666; margin-top: 4px; }
   .stats-row { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
-  .stat { background: #0f0f1a; border: 1px solid #2a2a4a; border-radius: 8px; padding: 14px 20px; flex: 1; min-width: 140px; }
-  .stat .num { font-size: 2rem; font-weight: 700; color: #a070ff; }
-  .stat .lbl { font-size: 0.75rem; color: #888; margin-top: 2px; }
-  #toast { position: fixed; bottom: 24px; right: 24px; background: #4caf50; color: #fff; padding: 12px 22px; border-radius: 8px; font-size: 0.9rem; display: none; z-index: 9999; box-shadow: 0 4px 16px rgba(0,0,0,0.4); }
-  #toast.error { background: #f44336; }
-  .flex-row { display: flex; gap: 12px; align-items: flex-end; }
-  .flex-row > * { flex: 1; }
+  .stat { background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 14px 20px; flex: 1; min-width: 140px; }
+  .stat .num { font-size: 2rem; font-weight: 700; color: var(--accent); }
+  .stat .lbl { font-size: 0.75rem; color: var(--text-dim); margin-top: 2px; }
+  #toast { position: fixed; bottom: 24px; right: 24px; background: var(--success); color: #fff; padding: 12px 22px; border-radius: 8px; font-size: 0.9rem; display: none; z-index: 9999; box-shadow: 0 4px 16px rgba(0,0,0,0.4); max-width: 400px; }
+  #toast.error { background: var(--error); }
+  .flex-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+  .flex-row > * { flex: 1; min-width: 140px; }
   .flex-row > button { flex: 0 0 auto; margin-bottom: 0; }
-  .placeholder { color: #555; text-align: center; padding: 32px; }
+  .placeholder { color: var(--text-faint); text-align: center; padding: 32px; }
+  .preview-pane { background: var(--bg-input); border: 1px solid var(--border); border-radius: 8px; padding: 16px; white-space: pre-wrap; font-size: 0.9rem; color: #d0d0d0; min-height: 120px; max-height: 320px; overflow-y: auto; }
+  .progress-bar { background: var(--bg-input); border-radius: 6px; overflow: hidden; height: 6px; margin-top: 6px; }
+  .progress-bar > div { height: 100%; background: var(--accent); transition: width 0.3s; }
+
+  /* Modal */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 24px; }
+  .modal-backdrop.active { display: flex; }
+  .modal { background: var(--bg-card); border-radius: 12px; padding: 28px; max-width: 720px; width: 100%; max-height: 90vh; overflow-y: auto; }
+  .modal h3 { color: var(--accent); margin-bottom: 16px; }
+  .modal .actions { display: flex; gap: 8px; margin-top: 20px; justify-content: flex-end; }
+
+  /* Spinner */
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Approval cards */
+  .approval { background: var(--bg-input); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+  .approval .meta { display: flex; gap: 12px; align-items: center; font-size: 0.85rem; color: var(--text-dim); margin-bottom: 8px; flex-wrap: wrap; }
+  .approval .from { color: var(--text); font-weight: 500; }
+  .approval .body { background: #07070d; border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 0.85rem; white-space: pre-wrap; margin-top: 8px; max-height: 200px; overflow-y: auto; }
+  .approval textarea { margin-top: 8px; min-height: 80px; }
+
+  .pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; justify-content: center; }
+  .pager button { background: var(--border); color: var(--text); border: none; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+  .pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  details > summary { cursor: pointer; color: var(--text-dim); font-size: 0.85rem; padding: 4px 0; }
+  details > summary:hover { color: var(--accent); }
 </style>
 </head>
 <body>
 
 <header>
   <h1>⚡ Betimail</h1>
-  <span>NFTコミュニティ サポートメール管理</span>
+  <span class="sub">NFTコミュニティ サポートメール管理</span>
+  <div class="health" id="health-indicator"></div>
 </header>
 
 <nav>
-  <button class="active" onclick="switchTab('send')">📤 メール送信</button>
-  <button onclick="switchTab('members')">👥 メンバー管理</button>
-  <button onclick="switchTab('history')">📋 送受信履歴</button>
+  <button class="active" data-tab="send">📤 メール送信</button>
+  <button data-tab="approvals">⏳ 承認待ち<span class="count" id="approval-count" style="display:none">0</span></button>
+  <button data-tab="templates">📝 テンプレート</button>
+  <button data-tab="members">👥 メンバー管理</button>
+  <button data-tab="history">📋 送受信履歴</button>
+  <button data-tab="jobs">🚚 送信ジョブ</button>
 </nav>
 
 <main>
 
-<!-- ── メール送信タブ ── -->
+<!-- ── メール送信 ── -->
 <div id="tab-send" class="tab-content active">
   <div class="stats-row" id="stats-row"></div>
 
   <div class="card">
-    <h2>メール送信</h2>
+    <h2>メール送信
+      <div class="actions">
+        <select id="apply-template" style="width:auto;"><option value="">テンプレートから適用…</option></select>
+      </div>
+    </h2>
     <label>送信対象 NFT種別（未選択で全員に送信）</label>
     <div class="nft-checkboxes" id="nft-checkboxes"></div>
 
@@ -84,30 +147,75 @@
     <input type="text" id="subject" placeholder="例: 【重要】コミュニティからのお知らせ">
 
     <label>本文</label>
-    <p class="hint">※ {name}・{nft_type} は自動的にメンバー情報に置換されます</p>
-    <textarea id="body" placeholder="{name} 様
+    <p class="hint">※ {name}・{nft_type}・{email} は自動的にメンバー情報に置換されます</p>
+    <textarea id="body" placeholder="{name} 様&#10;&#10;いつもコミュニティをご利用いただきありがとうございます。&#10;{nft_type} オーナーの皆様へお知らせです。&#10;&#10;...&#10;&#10;運営チーム"></textarea>
 
-いつもコミュニティをご利用いただきありがとうございます。
-{nft_type} オーナーの皆様へお知らせです。
+    <details style="margin-top:14px;">
+      <summary>プレビュー（メンバー1人目に対する文面）</summary>
+      <div class="preview-pane" id="preview-pane" style="margin-top:10px;">入力中…</div>
+    </details>
 
-...
-
-運営チーム"></textarea>
-
-    <div style="margin-top:16px; display:flex; gap:12px; align-items:center;">
-      <button class="btn" onclick="sendEmails()">📤 送信する</button>
-      <button class="btn secondary" onclick="previewCount()">対象人数を確認</button>
-      <span id="preview-count" style="color:#888; font-size:0.85rem;"></span>
+    <div style="margin-top:16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <button class="btn" id="send-btn">📤 送信する</button>
+      <button class="btn secondary" id="preview-count-btn">対象人数を確認</button>
+      <button class="btn secondary" id="save-template-btn">💾 テンプレート保存</button>
+      <span id="preview-count" style="color:var(--text-dim); font-size:0.85rem;"></span>
     </div>
 
     <div class="result-box" id="send-result" style="display:none;"></div>
   </div>
 </div>
 
-<!-- ── メンバー管理タブ ── -->
+<!-- ── 承認待ち ── -->
+<div id="tab-approvals" class="tab-content">
+  <div class="card">
+    <h2>承認待ち（AI生成下書き）
+      <div class="actions">
+        <button class="btn secondary small" id="refresh-approvals">🔄 更新</button>
+      </div>
+    </h2>
+    <p class="hint">受信メールに対するAI返信のうち、AIが自信を持てない・人手確認が必要と判断したもの。</p>
+    <div id="approvals-list" style="margin-top:16px;"></div>
+  </div>
+</div>
+
+<!-- ── テンプレート ── -->
+<div id="tab-templates" class="tab-content">
+  <div class="card">
+    <h2>テンプレート編集</h2>
+    <label>テンプレート名</label>
+    <input type="text" id="t-name" placeholder="例: 月次案内">
+    <label>件名</label>
+    <input type="text" id="t-subject" placeholder="件名">
+    <label>本文</label>
+    <textarea id="t-body" placeholder="本文（{name} などのプレースホルダ使用可）"></textarea>
+    <div style="margin-top:16px; display:flex; gap:8px;">
+      <button class="btn" id="save-template-card">保存</button>
+      <button class="btn secondary" id="clear-template-form">クリア</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>テンプレート一覧</h2>
+    <table>
+      <thead><tr><th>名前</th><th>件名</th><th>更新日</th><th></th></tr></thead>
+      <tbody id="templates-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── メンバー管理 ── -->
 <div id="tab-members" class="tab-content">
   <div class="card">
-    <h2>メンバー追加</h2>
+    <h2>メンバー追加
+      <div class="actions">
+        <label class="btn secondary small" style="margin:0; cursor:pointer;">
+          📥 CSV取り込み
+          <input type="file" id="import-csv" accept=".csv" style="display:none;">
+        </label>
+        <a class="btn secondary small" id="export-csv-link" style="text-decoration:none;">📤 CSV書き出し</a>
+      </div>
+    </h2>
     <div class="flex-row">
       <div>
         <label>名前</label>
@@ -132,16 +240,18 @@
         <input type="text" id="m-notes" placeholder="任意">
       </div>
     </div>
-    <button class="btn" style="margin-top:16px;" onclick="addMember()">追加</button>
+    <button class="btn" style="margin-top:16px;" id="add-member-btn">追加</button>
   </div>
 
   <div class="card">
     <h2>メンバー一覧</h2>
-    <div style="margin-bottom:12px; display:flex; gap:8px; align-items:center;">
-      <select id="filter-nft" onchange="loadMembers()" style="width:220px;">
+    <div style="margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <select id="filter-nft" style="width:220px;">
         <option value="">-- すべてのNFT種別 --</option>
       </select>
-      <button class="btn secondary" onclick="loadMembers()">更新</button>
+      <input type="text" id="member-search" placeholder="名前・メールで検索" style="width:240px;">
+      <button class="btn secondary" id="refresh-members">更新</button>
+      <span id="members-count" style="color:var(--text-dim); font-size:0.85rem;"></span>
     </div>
     <table>
       <thead><tr><th>名前</th><th>メールアドレス</th><th>NFT種別</th><th>購入日</th><th>備考</th><th></th></tr></thead>
@@ -150,20 +260,45 @@
   </div>
 </div>
 
-<!-- ── 履歴タブ ── -->
+<!-- ── 履歴 ── -->
 <div id="tab-history" class="tab-content">
   <div class="card">
-    <h2>送信済みメール</h2>
+    <h2>送信済みメール
+      <div class="actions">
+        <input type="text" id="sent-search" placeholder="検索" style="width:200px; padding:6px 10px;">
+      </div>
+    </h2>
     <table>
-      <thead><tr><th>日時</th><th>宛先</th><th>NFT種別</th><th>件名</th></tr></thead>
+      <thead><tr><th>日時</th><th>宛先</th><th>NFT種別</th><th>件名</th><th>状態</th></tr></thead>
       <tbody id="sent-table-body"></tbody>
     </table>
+    <div class="pager" id="sent-pager"></div>
   </div>
   <div class="card">
-    <h2>受信メール（AI処理状況）</h2>
+    <h2>受信メール（AI処理状況）
+      <div class="actions">
+        <input type="text" id="received-search" placeholder="検索" style="width:200px; padding:6px 10px;">
+      </div>
+    </h2>
     <table>
       <thead><tr><th>日時</th><th>送信者</th><th>件名</th><th>AI信頼度</th><th>ステータス</th></tr></thead>
       <tbody id="received-table-body"></tbody>
+    </table>
+    <div class="pager" id="received-pager"></div>
+  </div>
+</div>
+
+<!-- ── 送信ジョブ ── -->
+<div id="tab-jobs" class="tab-content">
+  <div class="card">
+    <h2>一括送信ジョブ
+      <div class="actions">
+        <button class="btn secondary small" id="refresh-jobs">🔄 更新</button>
+      </div>
+    </h2>
+    <table>
+      <thead><tr><th>ID</th><th>作成日時</th><th>件名</th><th>対象</th><th>進捗</th><th>状態</th></tr></thead>
+      <tbody id="jobs-tbody"></tbody>
     </table>
   </div>
 </div>
@@ -171,6 +306,24 @@
 </main>
 
 <div id="toast"></div>
+
+<!-- Modal: メンバー編集 -->
+<div class="modal-backdrop" id="member-modal">
+  <div class="modal">
+    <h3>メンバー編集</h3>
+    <input type="hidden" id="em-original-email">
+    <label>名前</label><input type="text" id="em-name">
+    <label>メールアドレス</label><input type="email" id="em-email">
+    <label>NFT種別</label><select id="em-nft"></select>
+    <label>購入日</label><input type="date" id="em-date">
+    <label>備考</label><input type="text" id="em-notes">
+    <div id="em-history" style="margin-top:14px;"></div>
+    <div class="actions">
+      <button class="btn secondary" id="em-cancel">キャンセル</button>
+      <button class="btn" id="em-save">保存</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const NFT_BADGE = {
@@ -180,16 +333,36 @@ const NFT_BADGE = {
   'スペシャルマスタードNFT': 'special',
 };
 
-let nftTypes = [];
+const STATUS_LABEL = {
+  pending: '<span class="status-dot dot-pending"></span>処理中',
+  waiting: '<span class="status-dot dot-pending"></span>承認待ち',
+  approved: '<span class="status-dot dot-sent"></span>承認済み',
+  approved_edited: '<span class="status-dot dot-sent"></span>修正送信',
+  auto_sent: '<span class="status-dot dot-sent"></span>AI自動送信',
+  rejected: '<span class="status-dot dot-error"></span>却下',
+  sent: '<span class="status-dot dot-sent"></span>送信済み',
+  error: '<span class="status-dot dot-error"></span>エラー',
+};
 
+let nftTypes = [];
+let allMembers = [];
+let sentPage = 0, receivedPage = 0;
+const PAGE_SIZE = 25;
+let sentSearch = '', receivedSearch = '';
+
+// ── API ─────────────────────────────────────────────
 async function api(path, opts = {}) {
   const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: opts.body ? { 'Content-Type': 'application/json' } : {},
     ...opts,
   });
+  if (res.status === 401) {
+    location.reload();
+    throw new Error('認証エラー');
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || 'エラーが発生しました');
+    throw new Error(err.detail || `エラー (${res.status})`);
   }
   return res.json();
 }
@@ -204,7 +377,7 @@ function toast(msg, isError = false) {
 
 function nftBadge(type) {
   const cls = NFT_BADGE[type] || 'unknown';
-  return `<span class="badge ${cls}">${type || '不明'}</span>`;
+  return `<span class="badge ${cls}">${escapeHTML(type || '不明')}</span>`;
 }
 
 function fmtDate(iso) {
@@ -212,92 +385,271 @@ function fmtDate(iso) {
   return iso.replace('T', ' ').substring(0, 16);
 }
 
+function escapeHTML(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function debounce(fn, ms) {
+  let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+
+function setBtnLoading(btn, loading) {
+  if (loading) {
+    btn.dataset.label = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner"></span> 処理中…';
+    btn.disabled = true;
+  } else {
+    btn.innerHTML = btn.dataset.label || btn.innerHTML;
+    btn.disabled = false;
+  }
+}
+
+// ── ヘルスチェック ──────────────────────────────────
+async function loadHealth() {
+  try {
+    const h = await fetch('/health').then(r => r.json());
+    const el = document.getElementById('health-indicator');
+    el.innerHTML = `
+      <span><span class="badge-dot" style="background:${h.admin_auth_enabled?'#4caf50':'#ff9800'}"></span>${h.admin_auth_enabled?'認証ON':'認証OFF (要設定)'}</span>
+      <span><span class="badge-dot" style="background:${h.telegram_enabled?'#4caf50':'#888'}"></span>Telegram ${h.telegram_enabled?'有効':'無効'}</span>
+    `;
+  } catch (_) {}
+}
+
+// ── 初期化 ──────────────────────────────────────────
 async function init() {
+  await loadHealth();
   nftTypes = await api('/api/nft-types');
 
-  // NFTチェックボックス（送信）
+  // NFT checkbox/select setup
   const cb = document.getElementById('nft-checkboxes');
   nftTypes.forEach(t => {
     const lbl = document.createElement('label');
-    lbl.innerHTML = `<input type="checkbox" value="${t}"> ${t}`;
-    lbl.querySelector('input').addEventListener('change', () => previewCount());
+    lbl.innerHTML = `<input type="checkbox" value="${escapeHTML(t)}"> ${escapeHTML(t)}`;
+    lbl.querySelector('input').addEventListener('change', previewCount);
     cb.appendChild(lbl);
   });
 
-  // NFT選択（メンバー追加）
-  const sel = document.getElementById('m-nft');
-  nftTypes.forEach(t => {
-    const opt = document.createElement('option');
-    opt.value = t; opt.textContent = t;
-    sel.appendChild(opt);
+  ['m-nft', 'em-nft', 'filter-nft'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (id === 'filter-nft') {
+      // 既にデフォルトのオプションあり
+    }
+    nftTypes.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = t;
+      sel.appendChild(opt);
+    });
   });
 
-  // NFTフィルター（メンバー一覧）
-  const fsel = document.getElementById('filter-nft');
-  nftTypes.forEach(t => {
-    const opt = document.createElement('option');
-    opt.value = t; opt.textContent = t;
-    fsel.appendChild(opt);
-  });
-
-  await loadStats();
-  await loadMembers();
-  await loadHistory();
+  // 初期ロード
+  await Promise.all([loadStats(), loadMembers(), loadTemplates()]);
+  loadApprovalCount();
+  // 承認待ちポーリング
+  setInterval(loadApprovalCount, 10000);
+  // 送信中ジョブの追跡
+  setInterval(() => {
+    if (document.getElementById('tab-jobs').classList.contains('active')) loadJobs();
+  }, 5000);
 }
 
+// ── タブ ────────────────────────────────────────────
+document.querySelectorAll('nav button').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
+  document.getElementById(`tab-${tab}`).classList.add('active');
+  document.querySelector(`nav button[data-tab="${tab}"]`).classList.add('active');
+  if (tab === 'history') loadHistory();
+  if (tab === 'members') loadMembers();
+  if (tab === 'approvals') loadApprovals();
+  if (tab === 'templates') loadTemplates();
+  if (tab === 'jobs') loadJobs();
+}
+
+// ── 統計 ────────────────────────────────────────────
 async function loadStats() {
   const members = await api('/api/members');
+  allMembers = members;
   const row = document.getElementById('stats-row');
   const counts = {};
   nftTypes.forEach(t => counts[t] = 0);
   members.forEach(m => { if (counts[m.nft_type] !== undefined) counts[m.nft_type]++; });
   row.innerHTML = `
     <div class="stat"><div class="num">${members.length}</div><div class="lbl">総メンバー数</div></div>
-    ${nftTypes.map(t => `<div class="stat"><div class="num">${counts[t]}</div><div class="lbl">${t}</div></div>`).join('')}
+    ${nftTypes.map(t => `<div class="stat"><div class="num">${counts[t]}</div><div class="lbl">${escapeHTML(t)}</div></div>`).join('')}
   `;
 }
 
-async function previewCount() {
-  const selected = getSelectedNftTypes();
-  let members;
-  if (selected.length === 0) {
-    members = await api('/api/members');
-  } else {
-    const all = await api('/api/members');
-    members = all.filter(m => selected.includes(m.nft_type));
-  }
-  document.getElementById('preview-count').textContent = `対象: ${members.length}名`;
-}
-
+// ── 送信タブ ────────────────────────────────────────
 function getSelectedNftTypes() {
   return Array.from(document.querySelectorAll('#nft-checkboxes input:checked')).map(el => el.value);
 }
 
-async function sendEmails() {
+async function previewCount() {
+  const selected = getSelectedNftTypes();
+  const members = selected.length === 0 ? allMembers : allMembers.filter(m => selected.includes(m.nft_type));
+  document.getElementById('preview-count').textContent = `対象: ${members.length}名`;
+}
+
+const updatePreview = debounce(async () => {
+  const body = document.getElementById('body').value;
+  if (!body.trim()) {
+    document.getElementById('preview-pane').textContent = '本文を入力するとプレビュー表示されます。';
+    return;
+  }
+  try {
+    const r = await api('/api/preview', { method: 'POST', body: JSON.stringify({ body }) });
+    document.getElementById('preview-pane').textContent = r.rendered;
+  } catch (e) {
+    document.getElementById('preview-pane').textContent = `⚠️ ${e.message}`;
+  }
+}, 400);
+
+document.getElementById('body').addEventListener('input', updatePreview);
+document.getElementById('preview-count-btn').addEventListener('click', previewCount);
+
+document.getElementById('send-btn').addEventListener('click', async (e) => {
   const subject = document.getElementById('subject').value.trim();
   const body = document.getElementById('body').value.trim();
   if (!subject || !body) { toast('件名と本文を入力してください', true); return; }
-
   const nft_types = getSelectedNftTypes();
+  const count = nft_types.length === 0 ? allMembers.length : allMembers.filter(m => nft_types.includes(m.nft_type)).length;
+  if (!confirm(`${count} 名にメールを送信します。よろしいですか？`)) return;
+  setBtnLoading(e.target, true);
   try {
-    const res = await api('/api/send', {
-      method: 'POST',
-      body: JSON.stringify({ nft_types, subject, body }),
-    });
-    toast(`送信開始: ${res.count}名 にメールを送信中です`);
+    const res = await api('/api/send', { method: 'POST', body: JSON.stringify({ nft_types, subject, body }) });
+    toast(`送信開始: ${res.count}名 (ジョブID ${res.job_id})`);
     const box = document.getElementById('send-result');
     box.style.display = 'block';
-    box.innerHTML = `<div class="result-item"><span class="status-dot dot-sent"></span>${res.count}名へ送信処理を開始しました</div>`;
-    await loadStats();
-  } catch (e) {
-    toast(e.message, true);
-  }
+    box.innerHTML = `<div class="result-item">ジョブID <b>${res.job_id}</b> で ${res.count} 件の送信を開始しました。「送信ジョブ」タブで進捗確認できます。</div>`;
+    pollJob(res.job_id);
+  } catch (err) { toast(err.message, true); }
+  finally { setBtnLoading(e.target, false); }
+});
+
+async function pollJob(jobId) {
+  const box = document.getElementById('send-result');
+  const interval = setInterval(async () => {
+    try {
+      const j = await api(`/api/send/jobs/${jobId}`);
+      const done = j.sent + j.failed;
+      const pct = j.total === 0 ? 0 : Math.round((done / j.total) * 100);
+      box.innerHTML = `
+        <div class="result-item">ジョブID <b>${j.id}</b> · 進捗 ${done}/${j.total} (${pct}%)</div>
+        <div class="result-item">✅ 送信成功: ${j.sent} / ❌ 失敗: ${j.failed} / 状態: ${j.status}</div>
+        <div class="progress-bar"><div style="width:${pct}%;"></div></div>
+      `;
+      if (j.status === 'done') { clearInterval(interval); loadStats(); }
+    } catch (_) { clearInterval(interval); }
+  }, 1500);
 }
 
+// ── テンプレート ────────────────────────────────────
+async function loadTemplates() {
+  const list = await api('/api/templates');
+  const tbody = document.getElementById('templates-tbody');
+  tbody.innerHTML = list.length === 0
+    ? '<tr><td colspan="4" class="placeholder">テンプレートなし</td></tr>'
+    : list.map(t => `
+      <tr>
+        <td>${escapeHTML(t.name)}</td>
+        <td>${escapeHTML(t.subject)}</td>
+        <td>${fmtDate(t.updated_at)}</td>
+        <td>
+          <button class="btn small secondary" onclick="loadTemplateToForm(${t.id})">編集</button>
+          <button class="btn small" onclick="applyTemplateToSend(${t.id})">送信に適用</button>
+          <button class="btn small danger" onclick="deleteTemplate(${t.id})">削除</button>
+        </td>
+      </tr>
+    `).join('');
+
+  // ドロップダウン同期
+  const sel = document.getElementById('apply-template');
+  sel.innerHTML = '<option value="">テンプレートから適用…</option>' +
+    list.map(t => `<option value="${t.id}">${escapeHTML(t.name)}</option>`).join('');
+  window._templates = list;
+}
+
+document.getElementById('apply-template').addEventListener('change', (e) => {
+  if (!e.target.value) return;
+  applyTemplateToSend(parseInt(e.target.value));
+  e.target.value = '';
+});
+
+function applyTemplateToSend(id) {
+  const t = (window._templates || []).find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('subject').value = t.subject;
+  document.getElementById('body').value = t.body;
+  updatePreview();
+  switchTab('send');
+  toast(`「${t.name}」を適用しました`);
+}
+
+function loadTemplateToForm(id) {
+  const t = (window._templates || []).find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('t-name').value = t.name;
+  document.getElementById('t-subject').value = t.subject;
+  document.getElementById('t-body').value = t.body;
+}
+
+document.getElementById('save-template-card').addEventListener('click', async () => {
+  const name = document.getElementById('t-name').value.trim();
+  const subject = document.getElementById('t-subject').value.trim();
+  const body = document.getElementById('t-body').value.trim();
+  if (!name || !subject || !body) { toast('すべての項目を入力してください', true); return; }
+  try {
+    await api('/api/templates', { method: 'POST', body: JSON.stringify({ name, subject, body }) });
+    toast('テンプレートを保存しました');
+    await loadTemplates();
+  } catch (e) { toast(e.message, true); }
+});
+
+document.getElementById('clear-template-form').addEventListener('click', () => {
+  ['t-name','t-subject','t-body'].forEach(id => document.getElementById(id).value = '');
+});
+
+async function deleteTemplate(id) {
+  if (!confirm('このテンプレートを削除しますか？')) return;
+  try {
+    await api(`/api/templates/${id}`, { method: 'DELETE' });
+    toast('削除しました');
+    await loadTemplates();
+  } catch (e) { toast(e.message, true); }
+}
+
+document.getElementById('save-template-btn').addEventListener('click', async () => {
+  const subject = document.getElementById('subject').value.trim();
+  const body = document.getElementById('body').value.trim();
+  if (!subject || !body) { toast('件名と本文を入力してください', true); return; }
+  const name = prompt('テンプレート名:');
+  if (!name) return;
+  try {
+    await api('/api/templates', { method: 'POST', body: JSON.stringify({ name, subject, body }) });
+    toast('テンプレートを保存しました');
+    await loadTemplates();
+  } catch (e) { toast(e.message, true); }
+});
+
+// ── メンバー ────────────────────────────────────────
 async function loadMembers() {
   const filterNft = document.getElementById('filter-nft').value;
+  const search = document.getElementById('member-search').value.toLowerCase();
   const url = filterNft ? `/api/members?nft_type=${encodeURIComponent(filterNft)}` : '/api/members';
-  const members = await api(url);
+  let members = await api(url);
+  if (search) {
+    members = members.filter(m =>
+      (m.name || '').toLowerCase().includes(search) ||
+      (m.email || '').toLowerCase().includes(search)
+    );
+  }
+  document.getElementById('members-count').textContent = `${members.length} 名`;
   const tbody = document.getElementById('members-table-body');
   if (members.length === 0) {
     tbody.innerHTML = '<tr><td colspan="6" class="placeholder">メンバーが見つかりません</td></tr>';
@@ -305,94 +657,291 @@ async function loadMembers() {
   }
   tbody.innerHTML = members.map(m => `
     <tr>
-      <td>${m.name}</td>
-      <td>${m.email}</td>
+      <td>${escapeHTML(m.name)}</td>
+      <td>${escapeHTML(m.email)}</td>
       <td>${nftBadge(m.nft_type)}</td>
-      <td>${m.joined_date || '-'}</td>
-      <td>${m.notes || '-'}</td>
-      <td><button class="btn danger" style="padding:4px 12px; font-size:0.78rem;" onclick="deleteMember('${m.email}')">削除</button></td>
+      <td>${escapeHTML(m.joined_date || '-')}</td>
+      <td>${escapeHTML(m.notes || '-')}</td>
+      <td>
+        <button class="btn small secondary" onclick="openEditMember('${encodeURIComponent(m.email)}')">編集</button>
+        <button class="btn small danger" onclick="deleteMember('${encodeURIComponent(m.email)}')">削除</button>
+      </td>
     </tr>
   `).join('');
 }
 
-async function addMember() {
+document.getElementById('filter-nft').addEventListener('change', loadMembers);
+document.getElementById('member-search').addEventListener('input', debounce(loadMembers, 300));
+document.getElementById('refresh-members').addEventListener('click', loadMembers);
+
+document.getElementById('add-member-btn').addEventListener('click', async (e) => {
   const name = document.getElementById('m-name').value.trim();
   const email = document.getElementById('m-email').value.trim();
   const nft_type = document.getElementById('m-nft').value;
   const joined_date = document.getElementById('m-date').value;
   const notes = document.getElementById('m-notes').value.trim();
   if (!name || !email || !nft_type) { toast('名前・メール・NFT種別は必須です', true); return; }
+  setBtnLoading(e.target, true);
   try {
     await api('/api/members', { method: 'POST', body: JSON.stringify({ name, email, nft_type, joined_date, notes }) });
     toast(`${name} を追加しました`);
     ['m-name','m-email','m-notes'].forEach(id => document.getElementById(id).value = '');
     await loadMembers();
     await loadStats();
-  } catch (e) {
-    toast(e.message, true);
-  }
-}
+  } catch (err) { toast(err.message, true); }
+  finally { setBtnLoading(e.target, false); }
+});
 
-async function deleteMember(email) {
+async function deleteMember(emailEnc) {
+  const email = decodeURIComponent(emailEnc);
   if (!confirm(`${email} を削除しますか？`)) return;
   try {
-    await api(`/api/members/${encodeURIComponent(email)}`, { method: 'DELETE' });
+    await api(`/api/members/${emailEnc}`, { method: 'DELETE' });
     toast('削除しました');
     await loadMembers();
     await loadStats();
-  } catch (e) {
-    toast(e.message, true);
-  }
+  } catch (e) { toast(e.message, true); }
 }
 
-async function loadHistory() {
-  const [sent, received] = await Promise.all([
-    api('/api/emails/sent'),
-    api('/api/emails/received'),
-  ]);
+async function openEditMember(emailEnc) {
+  const email = decodeURIComponent(emailEnc);
+  const data = await api(`/api/members/${emailEnc}/history`);
+  const m = data.member;
+  document.getElementById('em-original-email').value = email;
+  document.getElementById('em-name').value = m.name;
+  document.getElementById('em-email').value = m.email;
+  document.getElementById('em-nft').value = m.nft_type;
+  document.getElementById('em-date').value = m.joined_date || '';
+  document.getElementById('em-notes').value = m.notes || '';
 
-  const sentBody = document.getElementById('sent-table-body');
-  sentBody.innerHTML = sent.length === 0
-    ? '<tr><td colspan="4" class="placeholder">送信履歴なし</td></tr>'
-    : sent.map(e => `
+  const hist = document.getElementById('em-history');
+  const events = [
+    ...data.sent.map(s => ({ ts: s.sent_at, dir: '→送信', subject: s.subject, status: s.status })),
+    ...data.received.map(r => ({ ts: r.received_at, dir: '←受信', subject: r.subject, status: r.status })),
+  ].sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+  if (events.length === 0) {
+    hist.innerHTML = '<p class="hint">過去のやり取りはありません。</p>';
+  } else {
+    hist.innerHTML = `<h4 style="color:var(--accent); font-size:0.85rem; margin-bottom:6px;">過去のやり取り (最新${events.length}件)</h4>
+      <div style="max-height:160px; overflow-y:auto; font-size:0.8rem;">
+        ${events.slice(0, 20).map(e => `<div style="padding:4px 0; border-bottom:1px solid #1e1e38;">
+          <span style="color:var(--text-dim);">${fmtDate(e.ts)}</span>
+          ${e.dir} <b>${escapeHTML(e.subject || '(件名なし)')}</b>
+          ${STATUS_LABEL[e.status] || e.status}
+        </div>`).join('')}
+      </div>`;
+  }
+  document.getElementById('member-modal').classList.add('active');
+}
+
+document.getElementById('em-cancel').addEventListener('click', () => {
+  document.getElementById('member-modal').classList.remove('active');
+});
+
+document.getElementById('em-save').addEventListener('click', async (e) => {
+  const original = document.getElementById('em-original-email').value;
+  const payload = {
+    name: document.getElementById('em-name').value.trim(),
+    email: document.getElementById('em-email').value.trim(),
+    nft_type: document.getElementById('em-nft').value,
+    joined_date: document.getElementById('em-date').value,
+    notes: document.getElementById('em-notes').value.trim(),
+  };
+  setBtnLoading(e.target, true);
+  try {
+    await api(`/api/members/${encodeURIComponent(original)}`, {
+      method: 'PUT', body: JSON.stringify(payload),
+    });
+    toast('更新しました');
+    document.getElementById('member-modal').classList.remove('active');
+    await loadMembers();
+    await loadStats();
+  } catch (err) { toast(err.message, true); }
+  finally { setBtnLoading(e.target, false); }
+});
+
+// CSV インポート / エクスポート
+document.getElementById('import-csv').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const res = await fetch('/api/members/import', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error((await res.json()).detail || 'インポートエラー');
+    const r = await res.json();
+    toast(`${r.added} 件を追加${r.skipped.length ? `（${r.skipped.length} 件スキップ）` : ''}`);
+    if (r.skipped.length) console.warn('Skipped:', r.skipped);
+    await loadMembers();
+    await loadStats();
+  } catch (err) { toast(err.message, true); }
+  finally { e.target.value = ''; }
+});
+
+document.getElementById('export-csv-link').href = '/api/members/export.csv';
+
+// ── 承認待ち ────────────────────────────────────────
+async function loadApprovalCount() {
+  try {
+    const list = await api('/api/approvals');
+    const cnt = list.length;
+    const el = document.getElementById('approval-count');
+    if (cnt > 0) {
+      el.textContent = cnt;
+      el.style.display = 'inline-block';
+    } else {
+      el.style.display = 'none';
+    }
+  } catch (_) {}
+}
+
+async function loadApprovals() {
+  const list = await api('/api/approvals');
+  const root = document.getElementById('approvals-list');
+  if (list.length === 0) {
+    root.innerHTML = '<p class="placeholder">承認待ちの返信はありません。</p>';
+    return;
+  }
+  root.innerHTML = list.map(a => `
+    <div class="approval" data-id="${a.id}">
+      <div class="meta">
+        <span class="from">${escapeHTML(a.sender_name || '不明')} &lt;${escapeHTML(a.sender_email)}&gt;</span>
+        <span>件名: <b>${escapeHTML(a.original_subject || '(なし)')}</b></span>
+        <span style="color:var(--text-faint);">受信: ${fmtDate(a.created_at)}</span>
+      </div>
+      <details><summary>受信メール本文を見る</summary>
+        <div class="body">${escapeHTML(a.original_body || '')}</div>
+      </details>
+      <label>AI下書き（編集可）</label>
+      <textarea id="ad-body-${a.id}">${escapeHTML(a.ai_draft || '')}</textarea>
+      <div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn success" onclick="approveItem(${a.id}, this)">✅ そのまま送信</button>
+        <button class="btn" onclick="editItem(${a.id}, this)">✏️ 編集内容で送信</button>
+        <button class="btn danger" onclick="rejectItem(${a.id}, this)">❌ 却下</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function approveItem(id, btn) {
+  setBtnLoading(btn, true);
+  try {
+    await api(`/api/approvals/${id}/approve`, { method: 'POST', body: JSON.stringify({}) });
+    toast('送信しました');
+    await loadApprovals();
+    await loadApprovalCount();
+  } catch (e) { toast(e.message, true); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function editItem(id, btn) {
+  const body = document.getElementById(`ad-body-${id}`).value;
+  if (!body.trim()) { toast('本文が空です', true); return; }
+  setBtnLoading(btn, true);
+  try {
+    await api(`/api/approvals/${id}/edit`, { method: 'POST', body: JSON.stringify({ body }) });
+    toast('編集内容で送信しました');
+    await loadApprovals();
+    await loadApprovalCount();
+  } catch (e) { toast(e.message, true); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function rejectItem(id, btn) {
+  if (!confirm('この返信を却下しますか？（返信しない）')) return;
+  setBtnLoading(btn, true);
+  try {
+    await api(`/api/approvals/${id}/reject`, { method: 'POST', body: JSON.stringify({}) });
+    toast('却下しました');
+    await loadApprovals();
+    await loadApprovalCount();
+  } catch (e) { toast(e.message, true); }
+  finally { setBtnLoading(btn, false); }
+}
+
+document.getElementById('refresh-approvals').addEventListener('click', loadApprovals);
+
+// ── 履歴 ────────────────────────────────────────────
+async function loadHistory() {
+  await Promise.all([loadSent(), loadReceived()]);
+}
+
+async function loadSent() {
+  const r = await api(`/api/emails/sent?limit=${PAGE_SIZE}&offset=${sentPage * PAGE_SIZE}&search=${encodeURIComponent(sentSearch)}`);
+  const tbody = document.getElementById('sent-table-body');
+  tbody.innerHTML = r.items.length === 0
+    ? '<tr><td colspan="5" class="placeholder">送信履歴なし</td></tr>'
+    : r.items.map(e => `
       <tr>
         <td>${fmtDate(e.sent_at)}</td>
-        <td>${e.recipient_name} <span style="color:#666;">&lt;${e.recipient_email}&gt;</span></td>
+        <td>${escapeHTML(e.recipient_name || '')} <span style="color:#666;">&lt;${escapeHTML(e.recipient_email)}&gt;</span></td>
         <td>${nftBadge(e.nft_type)}</td>
-        <td>${e.subject}</td>
+        <td>${escapeHTML(e.subject)}</td>
+        <td>${STATUS_LABEL[e.status] || e.status}${e.error ? `<div class="hint">${escapeHTML(e.error)}</div>` : ''}</td>
       </tr>
     `).join('');
+  renderPager('sent-pager', sentPage, Math.ceil(r.total / PAGE_SIZE), p => { sentPage = p; loadSent(); });
+}
 
-  const statusLabel = {
-    pending: '<span class="status-dot dot-pending"></span>処理中',
-    approved: '<span class="status-dot dot-sent"></span>承認済み送信',
-    approved_edited: '<span class="status-dot dot-sent"></span>修正送信',
-    auto_sent: '<span class="status-dot dot-sent"></span>AI自動送信',
-    rejected: '<span class="status-dot dot-error"></span>却下',
-  };
-
-  const recvBody = document.getElementById('received-table-body');
-  recvBody.innerHTML = received.length === 0
+async function loadReceived() {
+  const r = await api(`/api/emails/received?limit=${PAGE_SIZE}&offset=${receivedPage * PAGE_SIZE}&search=${encodeURIComponent(receivedSearch)}`);
+  const tbody = document.getElementById('received-table-body');
+  tbody.innerHTML = r.items.length === 0
     ? '<tr><td colspan="5" class="placeholder">受信履歴なし</td></tr>'
-    : received.map(e => `
+    : r.items.map(e => `
       <tr>
         <td>${fmtDate(e.received_at)}</td>
-        <td>${e.sender_name || ''} <span style="color:#666;">&lt;${e.sender_email}&gt;</span></td>
-        <td>${e.subject || '-'}</td>
+        <td>${escapeHTML(e.sender_name || '')} <span style="color:#666;">&lt;${escapeHTML(e.sender_email)}&gt;</span></td>
+        <td>${escapeHTML(e.subject || '-')}</td>
         <td>${e.ai_confidence != null ? Math.round(e.ai_confidence * 100) + '%' : '-'}</td>
-        <td>${statusLabel[e.status] || e.status}</td>
+        <td>${STATUS_LABEL[e.status] || e.status}</td>
       </tr>
     `).join('');
+  renderPager('received-pager', receivedPage, Math.ceil(r.total / PAGE_SIZE), p => { receivedPage = p; loadReceived(); });
 }
 
-function switchTab(tab) {
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-  document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
-  document.getElementById(`tab-${tab}`).classList.add('active');
-  event.target.classList.add('active');
-  if (tab === 'history') loadHistory();
-  if (tab === 'members') loadMembers();
+document.getElementById('sent-search').addEventListener('input', debounce(e => {
+  sentSearch = e.target.value; sentPage = 0; loadSent();
+}, 300));
+document.getElementById('received-search').addEventListener('input', debounce(e => {
+  receivedSearch = e.target.value; receivedPage = 0; loadReceived();
+}, 300));
+
+function renderPager(id, page, totalPages, onPage) {
+  const el = document.getElementById(id);
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <button ${page === 0 ? 'disabled' : ''} onclick="(${onPage})(${page - 1})">←</button>
+    <span style="color:var(--text-dim);">${page + 1} / ${totalPages}</span>
+    <button ${page >= totalPages - 1 ? 'disabled' : ''} onclick="(${onPage})(${page + 1})">→</button>
+  `;
 }
+
+// ── 送信ジョブ ──────────────────────────────────────
+async function loadJobs() {
+  const jobs = await api('/api/send/jobs');
+  const tbody = document.getElementById('jobs-tbody');
+  if (jobs.length === 0) { tbody.innerHTML = '<tr><td colspan="6" class="placeholder">ジョブなし</td></tr>'; return; }
+  tbody.innerHTML = jobs.map(j => {
+    const done = j.sent + j.failed;
+    const pct = j.total === 0 ? 0 : Math.round((done / j.total) * 100);
+    return `
+      <tr>
+        <td>${j.id}</td>
+        <td>${fmtDate(j.created_at)}</td>
+        <td>${escapeHTML(j.subject)}</td>
+        <td>${j.total} 名</td>
+        <td>
+          ${done}/${j.total} (${pct}%) <span style="color:var(--success);">✅${j.sent}</span> <span style="color:var(--error);">❌${j.failed}</span>
+          <div class="progress-bar"><div style="width:${pct}%;"></div></div>
+        </td>
+        <td>${j.status === 'done' ? '<span class="status-dot dot-sent"></span>完了' : '<span class="status-dot dot-pending"></span>実行中'}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+document.getElementById('refresh-jobs').addEventListener('click', loadJobs);
 
 // 今日の日付をデフォルトに
 document.getElementById('m-date').value = new Date().toISOString().split('T')[0];
