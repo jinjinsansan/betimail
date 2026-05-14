@@ -9,6 +9,7 @@ from fastapi import (
     FastAPI, Request, HTTPException, BackgroundTasks, Depends, Response,
     UploadFile, File,
 )
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -23,10 +24,11 @@ import members as mbr
 import mail
 import ai
 import telegram_bot
-from auth import require_admin, admin_configured
+import auth as auth_mod
+from auth import require_admin, admin_configured, check_credentials, issue_token
 from ratelimit import limit_webhook, limit_send
 from webhook import verify_webhook_request
-from config import NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL
+from config import NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL, CORS_ORIGINS, CORS_ORIGIN_REGEX
 
 
 @asynccontextmanager
@@ -49,10 +51,28 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Betimail - NFTコミュニティサポート", lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
 
+# CORS: Vercel フロントなど別オリジンからのアクセスを許可
+if CORS_ORIGINS or CORS_ORIGIN_REGEX:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_origin_regex=CORS_ORIGIN_REGEX or None,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# ── 画面 ────────────────────────────────────────────────
+
+# ── 画面 (legacy) ───────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request, _user: str = Depends(require_admin)):
+async def index(request: Request):
+    """旧UI。Vercel化後は廃止予定だが当面残す。"""
+    import os
+    if not os.path.exists("templates/index.html"):
+        return HTMLResponse(
+            "<h1>Betimail API</h1><p>このバックエンドはAPIサーバーです。"
+            "管理画面は別途デプロイされたフロントエンドからアクセスしてください。</p>",
+        )
     return templates.TemplateResponse("index.html", {"request": request})
 
 
@@ -62,7 +82,34 @@ async def health():
         "status": "ok",
         "admin_auth_enabled": admin_configured(),
         "telegram_enabled": bool(TELEGRAM_BOT_TOKEN),
+        "version": "1.0",
     }
+
+
+# ── 認証 ────────────────────────────────────────────────
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+async def api_login(body: LoginRequest):
+    if not admin_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="ADMIN_PASSWORD が未設定です。サーバー側で設定してください。",
+        )
+    if not check_credentials(body.username, body.password):
+        log.warning("Login failed for user=%s", body.username)
+        raise HTTPException(status_code=401, detail="ユーザー名またはパスワードが違います")
+    token = issue_token(body.username)
+    log.info("Login OK for user=%s", body.username)
+    return token
+
+
+@app.get("/api/auth/check")
+async def api_auth_check(user: str = Depends(require_admin)):
+    return {"username": user, "ok": True}
 
 
 # ── メンバーAPI ─────────────────────────────────────────

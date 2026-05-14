@@ -84,13 +84,30 @@ def test_auth_required_when_password_set(monkeypatch):
     r = client.get("/api/members")
     assert r.status_code == 401
 
-    # 正しい認証は200
-    r = client.get("/api/members", auth=("admin", "secret123"))
+    # ログインしてトークン取得
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "secret123"})
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+
+    # Bearer トークンで200
+    headers = {"Authorization": f"Bearer {token}"}
+    r = client.get("/api/members", headers=headers)
     assert r.status_code == 200
 
-    # 間違ったパスワードは401
-    r = client.get("/api/members", auth=("admin", "wrong"))
+    # 不正トークンは401
+    r = client.get("/api/members", headers={"Authorization": "Bearer garbage.signature"})
     assert r.status_code == 401
+
+    # 間違ったパスワードは401
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "wrong"})
+    assert r.status_code == 401
+
+
+def test_login_when_not_configured(monkeypatch):
+    monkeypatch.setenv("ADMIN_PASSWORD", "")
+    client = _fresh_client(monkeypatch)
+    r = client.post("/api/auth/login", json={"username": "admin", "password": "anything"})
+    assert r.status_code == 503
 
 
 def test_nft_types(monkeypatch):

@@ -1,0 +1,32 @@
+services:
+  betimail:
+    build: .
+    container_name: betimail
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    expose:
+      - "8000"
+    # ローカル動作確認用に直接ホストの 8000 にも露出 (Caddy 経由でなく接続するため)
+    ports:
+      - "127.0.0.1:8000:8000"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - betimail
+
+volumes:
+  caddy_data:
+  caddy_config:

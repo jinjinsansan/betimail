@@ -1,0 +1,36 @@
+# Betimail API リバースプロキシ。
+# api.betimail.uk: TLS自動取得 (Let's Encrypt)
+# IP直アクセス: ヘルスチェック用に :80 でも応答
+
+{
+    email admin@betimail.uk
+}
+
+api.betimail.uk {
+    encode zstd gzip
+    reverse_proxy betimail:8000
+
+    log {
+        output stdout
+        format console
+    }
+
+    # 一般的なセキュリティヘッダ
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}
+
+# 旧 IP 直アクセス用 (ヘルスチェック以外は無効化)
+:80 {
+    @health path /health
+    handle @health {
+        reverse_proxy betimail:8000
+    }
+    handle {
+        respond "Betimail API. Use https://api.betimail.uk/" 410
+    }
+}

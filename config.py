@@ -26,6 +26,13 @@ AI_HISTORY_DEPTH = int(os.getenv("AI_HISTORY_DEPTH", "5"))
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
+# ── CORS ─────────────────────────────────────────────
+# カンマ区切りで複数指定可。"*" を含めると全許可（本番では非推奨）。
+_raw_cors = os.getenv("CORS_ORIGINS", "")
+CORS_ORIGINS: list[str] = [o.strip() for o in _raw_cors.split(",") if o.strip()]
+# Vercel preview などワイルドカード正規表現で許可。空文字は無視。
+CORS_ORIGIN_REGEX: str = os.getenv("CORS_ORIGIN_REGEX", "")
+
 # ── Welcome email ───────────────────────────────────────
 SEND_WELCOME_EMAIL = os.getenv("SEND_WELCOME_EMAIL", "true").lower() == "true"
 
