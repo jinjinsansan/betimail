@@ -34,7 +34,15 @@ export default function DashboardTab({ members, approvals, sent, received, jobs,
   const nftCounts = useMemo(() => {
     const c: Record<string, number> = {};
     NFT_TYPES.forEach((t) => (c[t] = 0));
-    members.forEach((m) => { if (c[m.nft_type] != null) c[m.nft_type]++; });
+    members.forEach((m) => {
+      (m.nft_type || "")
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .forEach((t) => {
+          if (c[t] != null) c[t]++;
+        });
+    });
     return c;
   }, [members]);
 
