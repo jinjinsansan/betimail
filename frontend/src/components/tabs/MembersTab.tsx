@@ -140,7 +140,18 @@ export default function MembersTab({ members, notify, onReload }: Props) {
                     </div>
                   </td>
                   <td>{m.email}</td>
-                  <td><span className={`badge ${nftBadgeClass(m.nft_type)}`}>{nftLabel(m.nft_type)}</span></td>
+                  <td>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                      {(m.nft_type || "")
+                        .split(",")
+                        .map((t) => t.trim())
+                        .filter(Boolean)
+                        .map((t) => (
+                          <span key={t} className={`badge ${nftBadgeClass(t)}`}>{nftLabel(t)}</span>
+                        ))}
+                      {!m.nft_type && <span style={{ color: "var(--text-4)" }}>—</span>}
+                    </div>
+                  </td>
                   <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{m.joined_date || "-"}</span></td>
                   <td>{m.notes ? <span className="badge badge-neutral">{m.notes}</span> : <span style={{ color: "var(--text-4)" }}>—</span>}</td>
                   <td>
