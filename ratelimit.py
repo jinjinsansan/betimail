@@ -40,3 +40,8 @@ def limit_webhook(request: Request) -> None:
 
 def limit_send(request: Request) -> None:
     rate_limit("send", max_calls=10, window_seconds=60.0, identifier=_client_ip(request))
+
+
+def limit_public_check(request: Request) -> None:
+    """公開エンドポイント（メルマガ配信チェック）の濫用防止: 20回/分/IP。"""
+    rate_limit("public_check", max_calls=20, window_seconds=60.0, identifier=_client_ip(request))

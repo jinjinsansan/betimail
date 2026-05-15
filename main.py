@@ -26,7 +26,7 @@ import ai
 import telegram_bot
 import auth as auth_mod
 from auth import require_admin, admin_configured, check_credentials, issue_token
-from ratelimit import limit_webhook, limit_send
+from ratelimit import limit_webhook, limit_send, limit_public_check
 from webhook import verify_webhook_request
 from config import NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL, CORS_ORIGINS, CORS_ORIGIN_REGEX
 
@@ -83,6 +83,45 @@ async def health():
         "admin_auth_enabled": admin_configured(),
         "telegram_enabled": bool(TELEGRAM_BOT_TOKEN),
         "version": "1.0",
+    }
+
+
+# ── 公開エンドポイント (ユーザーセルフチェック) ──────────
+class PublicCheckRequest(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/public/check")
+async def api_public_check(
+    body: PublicCheckRequest,
+    request: Request,
+    _rl=Depends(limit_public_check),
+):
+    """メルマガ配信対象者かどうかをユーザー自身が確認できる公開API。
+
+    レート制限あり (20回/分/IP)。返却内容は本人特定可能だが、
+    既に閉じたコミュニティ内の保有情報のため、emailを知っている人にのみ
+    意味のある情報。Telegram/メール送信機能は提供しない。
+    """
+    member = mbr.get_member_by_email(body.email)
+    if not member:
+        return {"found": False}
+
+    summary = db.get_purchase_summary(member["email"])
+    nft_types = []
+    for row in summary.get("by_nft", []):
+        nft_types.append(row["nft_type"])
+
+    # 重複除去・並び固定
+    ordered = []
+    for t in NFT_TYPES:
+        if t in nft_types and t not in ordered:
+            ordered.append(t)
+
+    return {
+        "found": True,
+        "name": member["name"],
+        "nft_types": ordered,
     }
 
 

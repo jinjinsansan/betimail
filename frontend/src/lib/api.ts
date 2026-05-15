@@ -54,6 +54,11 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
   check: () => request<{ username: string; ok: boolean }>("/api/auth/check"),
+  publicCheck: (email: string) =>
+    request<{ found: boolean; name?: string; nft_types?: string[] }>("/api/public/check", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
 
   nftTypes: () => request<string[]>("/api/nft-types"),
 
