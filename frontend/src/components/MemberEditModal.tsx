@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { Member, MemberHistory, MemberPurchases } from "@/lib/types";
+import type { Member, MemberHistory, MemberPurchases, MemberWithdrawSummary } from "@/lib/types";
 import { NFT_TYPES, fmtDate, statusInfo, nftBadgeClass, nftLabel } from "@/lib/ui";
 import { I } from "@/lib/icons";
 import { Modal } from "./common";
@@ -24,26 +24,30 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
   const [form, setForm] = useState<Member>(EMPTY);
   const [history, setHistory] = useState<MemberHistory | null>(null);
   const [purchases, setPurchases] = useState<MemberPurchases | null>(null);
+  const [withdraws, setWithdraws] = useState<MemberWithdrawSummary | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
-  const [section, setSection] = useState<"info" | "purchases" | "history">("info");
+  const [section, setSection] = useState<"info" | "purchases" | "withdraws" | "history">("info");
 
   useEffect(() => {
     if (!isEdit || !email) {
       setForm({ ...EMPTY });
       setHistory(null);
       setPurchases(null);
+      setWithdraws(null);
       return;
     }
     setLoading(true);
     Promise.all([
       api.members.history(email).catch(() => null),
       api.members.purchases(email).catch(() => null),
+      api.members.withdraws(email).catch(() => null),
     ])
-      .then(([h, p]) => {
+      .then(([h, p, w]) => {
         if (h) { setForm(h.member); setHistory(h); }
         if (p) setPurchases(p);
-        if (!h && !p) { notify("読み込みエラー", "error"); onClose(); }
+        if (w) setWithdraws(w);
+        if (!h && !p && !w) { notify("読み込みエラー", "error"); onClose(); }
       })
       .finally(() => setLoading(false));
   }, [email, isEdit]);
@@ -103,6 +107,9 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
               <div className={`chip ${section === "purchases" ? "active" : ""}`} onClick={() => setSection("purchases")}>
                 購入履歴 {purchases?.purchases?.length ? <span className="chip-count">· {purchases.purchases.length}</span> : null}
               </div>
+              <div className={`chip ${section === "withdraws" ? "active" : ""}`} onClick={() => setSection("withdraws")}>
+                買い取り受取 {withdraws?.count ? <span className="chip-count">· {withdraws.count}</span> : null}
+              </div>
               <div className={`chip ${section === "history" ? "active" : ""}`} onClick={() => setSection("history")}>
                 やり取り {events.length > 0 ? <span className="chip-count">· {events.length}</span> : null}
               </div>
@@ -137,6 +144,10 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
 
           {section === "purchases" && purchases && (
             <PurchasesSection data={purchases} />
+          )}
+
+          {section === "withdraws" && withdraws && (
+            <WithdrawsSection data={withdraws} />
           )}
 
           {section === "history" && (
@@ -268,5 +279,63 @@ function Stat({ label, value }: { label: string; value: number | string }) {
       <div style={{ fontSize: 11, color: "var(--text-3)", fontWeight: 500 }}>{label}</div>
       <div style={{ fontSize: 18, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
     </div>
+  );
+}
+
+function WithdrawsSection({ data }: { data: MemberWithdrawSummary }) {
+  if (data.count === 0) {
+    return (
+      <p style={{ color: "var(--text-3)", padding: 24, textAlign: "center" }}>
+        買い取り資金の受取記録はまだありません。
+      </p>
+    );
+  }
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <Stat label="受取回数" value={data.count} />
+        <Stat label="受取累計" value={`$${data.total_usdt.toLocaleString()} USDT`} />
+      </div>
+
+      <div style={{ fontSize: 12, color: "var(--text-2)", fontWeight: 500, marginBottom: 8 }}>
+        nftportal 出金履歴
+      </div>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
+        {data.withdraws.map((w, i) => {
+          const statusLabel: Record<number, { text: string; cls: string }> = {
+            0: { text: "申請中", cls: "badge-warning" },
+            1: { text: "処理中", cls: "badge-info" },
+            2: { text: "完了", cls: "badge-success" },
+            3: { text: "却下", cls: "badge-danger" },
+          };
+          const s = statusLabel[w.status ?? -1] || { text: String(w.status ?? "?"), cls: "badge-neutral" };
+          return (
+            <div
+              key={w.id}
+              style={{
+                padding: "10px 12px", fontSize: 12.5,
+                borderBottom: i < data.withdraws.length - 1 ? "1px solid var(--border)" : "none",
+                background: i % 2 ? "var(--bg-soft)" : "var(--bg-elev)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ color: "var(--text-4)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                  {fmtDate(w.requested_at || "")}
+                </span>
+                <span className={`badge ${s.cls}`}>{s.text}</span>
+                <span style={{ marginLeft: "auto", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                  ${w.amount_usdt.toLocaleString()} USDT
+                </span>
+              </div>
+              {w.destination && (
+                <div style={{ marginTop: 4, color: "var(--text-4)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+                  → {w.destination.slice(0, 16)}...{w.destination.slice(-8)}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </>
   );
 }

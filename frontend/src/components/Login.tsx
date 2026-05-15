@@ -1,6 +1,6 @@
 "use client";
-import { useState, FormEvent, ReactNode } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useState, FormEvent, ReactNode } from "react";
+import { api, API_BASE } from "@/lib/api";
 import { saveToken } from "@/lib/auth";
 import { I } from "@/lib/icons";
 
@@ -71,10 +71,7 @@ export default function Login({ onSuccess }: Props) {
             />
           </div>
 
-          <div className="login-status">
-            <div className="status-pill"><span className="status-dot ok" /> All systems operational</div>
-            <div className="status-pill" style={{ marginLeft: "auto" }}>v2.4.1</div>
-          </div>
+          <HealthStatus />
         </div>
       </aside>
 
@@ -130,7 +127,12 @@ export default function Login({ onSuccess }: Props) {
             </div>
           )}
 
-          <button className="btn primary lg" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center" }}>
+          <button
+            className="btn primary lg"
+            type="submit"
+            disabled={loading}
+            style={{ width: "100%", justifyContent: "center" }}
+          >
             {loading ? <><span className="spinner" /> サインイン中…</> : <>サインイン <I.ArrowRight /></>}
           </button>
 
@@ -150,6 +152,35 @@ function Feature({ icon, title, sub }: { icon: ReactNode; title: string; sub: st
       <div>
         <div className="login-feature-title">{title}</div>
         <div className="login-feature-sub">{sub}</div>
+      </div>
+    </div>
+  );
+}
+
+function HealthStatus() {
+  const [health, setHealth] = useState<{ admin_auth_enabled: boolean; telegram_enabled: boolean } | null>(null);
+  useEffect(() => {
+    fetch(`${API_BASE}/health`)
+      .then((r) => r.json())
+      .then(setHealth)
+      .catch(() => {});
+  }, []);
+  if (!health) {
+    return (
+      <div className="login-status">
+        <div className="status-pill"><span className="status-dot off" /> 接続確認中…</div>
+      </div>
+    );
+  }
+  const ok = health.admin_auth_enabled;
+  return (
+    <div className="login-status">
+      <div className="status-pill">
+        <span className={`status-dot ${ok ? "ok" : "warn"}`} />
+        {ok ? "API 正常稼働中" : "認証未設定"}
+      </div>
+      <div className="status-pill" style={{ marginLeft: "auto" }}>
+        Telegram {health.telegram_enabled ? "ON" : "OFF"}
       </div>
     </div>
   );

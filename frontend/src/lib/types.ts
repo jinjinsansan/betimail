@@ -133,3 +133,44 @@ export type MemberPurchases = {
   purchases: Purchase[];
   summary: PurchaseSummary;
 };
+
+export type WithdrawRequest = {
+  id: number;
+  external_id: number;
+  email: string;
+  name: string;
+  user_id?: number | null;
+  amount_usdt: number;
+  destination?: string | null;
+  type?: number | null;
+  status?: number | null;
+  requested_at?: string | null;
+  action_at?: string | null;
+  secret_code?: string | null;
+  packet?: string | null;
+  title?: string | null;
+  nft_kind?: string | null;
+  raw_json?: string | null;
+  imported_at?: string;
+  notified_at?: string | null;
+};
+
+export type WithdrawsList = {
+  items: WithdrawRequest[];
+  total_count: number;
+  total_usdt: number;
+  by_recipient: { email: string; name: string; count: number; total_usdt: number }[];
+};
+
+export type WithdrawStats = {
+  count: number;
+  total_usdt: number;
+  unique_recipients: number;
+};
+
+export type MemberWithdrawSummary = {
+  email: string;
+  count: number;
+  total_usdt: number;
+  withdraws: WithdrawRequest[];
+};

@@ -2,6 +2,7 @@ import { getToken, clearToken } from "./auth";
 import type {
   Member, Template, Approval, BulkJob, Paged, SentEmail, ReceivedEmail,
   Health, LoginResponse, MemberHistory, MemberPurchases,
+  WithdrawsList, WithdrawStats, MemberWithdrawSummary,
 } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
@@ -71,6 +72,8 @@ export const api = {
       request<MemberHistory>(`/api/members/${encodeURIComponent(email)}/history`),
     purchases: (email: string) =>
       request<MemberPurchases>(`/api/members/${encodeURIComponent(email)}/purchases`),
+    withdraws: (email: string) =>
+      request<MemberWithdrawSummary>(`/api/members/${encodeURIComponent(email)}/withdraws`),
     importCsv: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
@@ -111,6 +114,12 @@ export const api = {
       request<{ status: string }>(`/api/approvals/${id}/edit`, { method: "POST", body: JSON.stringify({ body }) }),
     reject: (id: number) =>
       request<{ status: string }>(`/api/approvals/${id}/reject`, { method: "POST", body: JSON.stringify({}) }),
+  },
+
+  withdraws: {
+    list: (limit = 500, email?: string) =>
+      request<WithdrawsList>(`/api/withdraws?limit=${limit}${email ? `&email=${encodeURIComponent(email)}` : ""}`),
+    stats: () => request<WithdrawStats>("/api/withdraws/stats"),
   },
 
   templates: {

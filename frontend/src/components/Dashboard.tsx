@@ -13,6 +13,7 @@ import TemplatesTab from "./tabs/TemplatesTab";
 import MembersTab from "./tabs/MembersTab";
 import HistoryTab from "./tabs/HistoryTab";
 import JobsTab from "./tabs/JobsTab";
+import WithdrawsTab from "./tabs/WithdrawsTab";
 
 type Props = { onLogout: () => void };
 
@@ -25,7 +26,13 @@ export default function Dashboard({ onLogout }: Props) {
   const [sentEmails, setSentEmails] = useState<SentEmail[]>([]);
   const [recvEmails, setRecvEmails] = useState<ReceivedEmail[]>([]);
   const [jobs, setJobs] = useState<BulkJob[]>([]);
+  const [username, setUsername] = useState("admin");
   const { toasts, notify, dismiss } = useToasts();
+
+  // ログイン中のユーザー名を取得
+  useEffect(() => {
+    api.check().then((r) => setUsername(r.username || "admin")).catch(() => {});
+  }, []);
 
   async function loadAll() {
     try {
@@ -94,6 +101,7 @@ export default function Dashboard({ onLogout }: Props) {
     approvals: ["Betimail", "メール", "承認待ち"],
     members: ["Betimail", "メール", "メンバー管理"],
     history: ["Betimail", "メール", "送受信履歴"],
+    withdraws: ["Betimail", "買い取り", "出金履歴"],
     templates: ["Betimail", "設定", "テンプレート"],
     jobs: ["Betimail", "設定", "送信ジョブ"],
   };
@@ -106,7 +114,7 @@ export default function Dashboard({ onLogout }: Props) {
           onNavigate={setTab}
           approvalCount={approvals.length}
           health={health}
-          username="運営チーム"
+          username={username}
           onLogout={logout}
         />
         <div className="main">
@@ -134,6 +142,7 @@ export default function Dashboard({ onLogout }: Props) {
             {tab === "templates" && <TemplatesTab templates={templates} notify={notify} onReload={loadAll} />}
             {tab === "members" && <MembersTab members={members} notify={notify} onReload={loadAll} />}
             {tab === "history" && <HistoryTab notify={notify} />}
+            {tab === "withdraws" && <WithdrawsTab notify={notify} />}
             {tab === "jobs" && <JobsTab notify={notify} />}
           </div>
         </div>

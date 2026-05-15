@@ -9,6 +9,7 @@ export type TabKey =
   | "approvals"
   | "members"
   | "history"
+  | "withdraws"
   | "templates"
   | "jobs";
 
@@ -30,6 +31,7 @@ export default function Sidebar({ current, onNavigate, approvalCount, health, us
     { key: "approvals", label: "承認待ち", icon: <I.Clock />, badge: approvalCount },
     { key: "members", label: "メンバー管理", icon: <I.Users /> },
     { key: "history", label: "送受信履歴", icon: <I.Inbox /> },
+    { key: "withdraws", label: "買い取り出金", icon: <I.DollarSign /> },
     { key: "templates", label: "テンプレート", icon: <I.FileText /> },
     { key: "jobs", label: "送信ジョブ", icon: <I.Truck /> },
   ];
@@ -52,8 +54,11 @@ export default function Sidebar({ current, onNavigate, approvalCount, health, us
         <NavItem key={it.key} item={it} active={current === it.key} onClick={() => onNavigate(it.key)} />
       ))}
 
+      <div className="nav-section">買い取り</div>
+      <NavItem item={items[5]} active={current === items[5].key} onClick={() => onNavigate(items[5].key)} />
+
       <div className="nav-section">設定</div>
-      {items.slice(5).map((it) => (
+      {items.slice(6).map((it) => (
         <NavItem key={it.key} item={it} active={current === it.key} onClick={() => onNavigate(it.key)} />
       ))}
 
@@ -74,7 +79,7 @@ export default function Sidebar({ current, onNavigate, approvalCount, health, us
           <div className="avatar">{(username[0] || "?").toUpperCase()}</div>
           <div style={{ overflow: "hidden", flex: 1 }}>
             <div className="user-name">{username}</div>
-            <div className="user-mail">admin@betimail.uk</div>
+            <div className="user-mail">クリックでログアウト</div>
           </div>
           <I.LogOut size={14} />
         </div>

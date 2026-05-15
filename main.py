@@ -242,6 +242,55 @@ async def api_member_purchases(email: str, _user: str = Depends(require_admin)):
     return {"member": member, "purchases": purchases, "summary": summary}
 
 
+@app.get("/api/members/{email:path}/withdraws")
+async def api_member_withdraws(email: str, _user: str = Depends(require_admin)):
+    member = mbr.get_member_by_email(email)
+    if not member:
+        raise HTTPException(status_code=404, detail="メンバーが見つかりません")
+    summary = db.get_withdraw_summary_by_email(email)
+    return summary
+
+
+# ── 出金申請 (買い取り資金支払い) ─────────────────────────
+@app.get("/api/withdraws")
+async def api_list_withdraws(
+    limit: int = 200,
+    email: Optional[str] = None,
+    _user: str = Depends(require_admin),
+):
+    items = db.list_withdraws(limit=limit, email=email)
+    # 集計
+    total_usdt = sum((r["amount_usdt"] or 0) for r in items)
+    by_email: dict[str, dict] = {}
+    for r in items:
+        e = r["email"]
+        b = by_email.setdefault(e, {
+            "email": e, "name": r.get("name"),
+            "count": 0, "total_usdt": 0.0,
+        })
+        b["count"] += 1
+        b["total_usdt"] += (r["amount_usdt"] or 0)
+    by_recipient = sorted(by_email.values(), key=lambda x: -x["total_usdt"])
+    return {
+        "items": items,
+        "total_count": len(items),
+        "total_usdt": total_usdt,
+        "by_recipient": by_recipient,
+    }
+
+
+@app.get("/api/withdraws/stats")
+async def api_withdraw_stats(_user: str = Depends(require_admin)):
+    """ダッシュボード用の集計のみ。"""
+    items = db.list_withdraws(limit=10000)
+    total = sum((r["amount_usdt"] or 0) for r in items)
+    return {
+        "count": len(items),
+        "total_usdt": total,
+        "unique_recipients": len({r["email"] for r in items}),
+    }
+
+
 @app.post("/api/members/import")
 async def api_import_members(file: UploadFile = File(...), _user: str = Depends(require_admin)):
     content = (await file.read()).decode("utf-8-sig")

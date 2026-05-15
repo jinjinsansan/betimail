@@ -1,6 +1,7 @@
 "use client";
-import { useMemo } from "react";
-import type { Member, SentEmail, ReceivedEmail, BulkJob, Approval } from "@/lib/types";
+import { useEffect, useMemo, useState } from "react";
+import { api } from "@/lib/api";
+import type { Member, SentEmail, ReceivedEmail, BulkJob, Approval, WithdrawStats } from "@/lib/types";
 import { NFT_TYPES, nftBadgeClass, nftLabel, statusInfo, fmtDate } from "@/lib/ui";
 import { I } from "@/lib/icons";
 import { StatCard, Empty, ConfBar } from "../common";
@@ -16,6 +17,9 @@ type Props = {
 };
 
 export default function DashboardTab({ members, approvals, sent, received, jobs, onNavigate }: Props) {
+  const [withdrawStats, setWithdrawStats] = useState<WithdrawStats | null>(null);
+  useEffect(() => { api.withdraws.stats().then(setWithdrawStats).catch(() => {}); }, []);
+
   const stats = useMemo(() => {
     const last7 = new Date();
     last7.setDate(last7.getDate() - 7);
@@ -23,7 +27,8 @@ export default function DashboardTab({ members, approvals, sent, received, jobs,
     const recv7 = received.filter((r) => new Date(r.received_at) >= last7).length;
     const sentOK = sent.filter((s) => s.status === "sent").length;
     const sentRate = sent.length ? Math.round((sentOK / sent.length) * 100) : 100;
-    return { sent7, recv7, sentRate };
+    const autoSent7 = received.filter((r) => r.status === "auto_sent" && new Date(r.received_at) >= last7).length;
+    return { sent7, recv7, sentRate, autoSent7 };
   }, [sent, received]);
 
   const nftCounts = useMemo(() => {
@@ -58,13 +63,12 @@ export default function DashboardTab({ members, approvals, sent, received, jobs,
 
   const recentJobs = jobs.slice(0, 3);
   const recentApprovals = approvals.slice(0, 3);
-  const autoSentCount = Math.round(stats.recv7 * 0.78);
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h1 className="page-title">こんにちは、運営チーム</h1>
+          <h1 className="page-title">ダッシュボード</h1>
           <div className="page-sub">
             {new Date().toLocaleDateString("ja-JP", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}{" "}
             ・ 直近の状況をお伝えします。
@@ -78,8 +82,8 @@ export default function DashboardTab({ members, approvals, sent, received, jobs,
 
       <div className="stat-grid">
         <StatCard label="メンバー総数" value={members.length} delta={`${NFT_TYPES.length} 種別`} icon={<I.Users />} />
-        <StatCard label="今週の送信" value={stats.sent7} delta={`成功率 ${stats.sentRate}%`} deltaUp icon={<I.Send />} />
-        <StatCard label="今週の受信" value={stats.recv7} delta={stats.recv7 > 0 ? `AI自動返信 ${autoSentCount}件` : "受信なし"} icon={<I.Inbox />} />
+        <StatCard label="今週の送信" value={stats.sent7} delta={`成功率 ${stats.sentRate}%`} deltaUp={stats.sentRate >= 95} icon={<I.Send />} />
+        <StatCard label="今週の受信" value={stats.recv7} delta={stats.autoSent7 > 0 ? `AI自動返信 ${stats.autoSent7}件` : "AI自動返信 0件"} icon={<I.Inbox />} />
         <StatCard
           label="承認待ち"
           value={approvals.length}
@@ -88,6 +92,37 @@ export default function DashboardTab({ members, approvals, sent, received, jobs,
           icon={<I.Clock />}
           danger={approvals.length > 2}
           onClick={() => onNavigate("approvals")}
+        />
+      </div>
+
+      <div className="stat-grid" style={{ marginTop: 12 }}>
+        <StatCard
+          label="買い取り支払い累計"
+          value={withdrawStats ? `$${withdrawStats.total_usdt.toLocaleString()}` : "—"}
+          delta={withdrawStats ? `${withdrawStats.count}件 / ${withdrawStats.unique_recipients}名` : ""}
+          icon={<I.DollarSign />}
+          onClick={() => onNavigate("withdraws")}
+        />
+        <StatCard
+          label="送信ジョブ"
+          value={jobs.length}
+          delta={`実行中 ${jobs.filter((j) => j.status === "running").length} / 完了 ${jobs.filter((j) => j.status === "done").length}`}
+          icon={<I.Truck />}
+          onClick={() => onNavigate("jobs")}
+        />
+        <StatCard
+          label="テンプレート"
+          value={"—"}
+          delta="管理画面で確認"
+          icon={<I.FileText />}
+          onClick={() => onNavigate("templates")}
+        />
+        <StatCard
+          label="メールスループット"
+          value={sent.length + received.length}
+          delta={`累計 送信${sent.length} / 受信${received.length}`}
+          icon={<I.Activity />}
+          onClick={() => onNavigate("history")}
         />
       </div>
 
