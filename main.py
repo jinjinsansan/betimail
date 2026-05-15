@@ -26,9 +26,13 @@ import ai
 import telegram_bot
 import auth as auth_mod
 from auth import require_admin, admin_configured, check_credentials, issue_token
-from ratelimit import limit_webhook, limit_send, limit_public_check
+from ratelimit import limit_webhook, limit_send, limit_public_check, limit_login
 from webhook import verify_webhook_request
-from config import NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL, CORS_ORIGINS, CORS_ORIGIN_REGEX
+from config import (
+    NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL,
+    CORS_ORIGINS, CORS_ORIGIN_REGEX, AI_HISTORY_DEPTH,
+    PUBLIC_CHECK_EXPOSE_DETAILS,
+)
 
 
 @asynccontextmanager
@@ -118,11 +122,11 @@ async def api_public_check(
         if t in nft_types and t not in ordered:
             ordered.append(t)
 
-    return {
-        "found": True,
-        "name": member["name"],
-        "nft_types": ordered,
-    }
+    data = {"found": True}
+    if PUBLIC_CHECK_EXPOSE_DETAILS:
+        data["name"] = member["name"]
+        data["nft_types"] = ordered
+    return data
 
 
 # ── 認証 ────────────────────────────────────────────────
@@ -132,7 +136,11 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/api/auth/login")
-async def api_login(body: LoginRequest):
+async def api_login(
+    body: LoginRequest,
+    request: Request,
+    _rl=Depends(limit_login),
+):
     if not admin_configured():
         raise HTTPException(
             status_code=503,
@@ -152,6 +160,20 @@ async def api_auth_check(user: str = Depends(require_admin)):
 
 
 # ── メンバーAPI ─────────────────────────────────────────
+def _normalize_nft_types_value(v: str) -> str:
+    raw = [t.strip() for t in (v or "").split(",") if t.strip()]
+    if not raw:
+        raise ValueError("NFT種別は必須です")
+    unknown = [t for t in raw if t not in NFT_TYPES]
+    if unknown:
+        raise ValueError(f"不正なNFT種別: {', '.join(unknown)}")
+    ordered = []
+    for t in NFT_TYPES:
+        if t in raw and t not in ordered:
+            ordered.append(t)
+    return ", ".join(ordered)
+
+
 class MemberCreate(BaseModel):
     name: str = Field(min_length=1)
     email: EmailStr
@@ -162,9 +184,7 @@ class MemberCreate(BaseModel):
     @field_validator("nft_type")
     @classmethod
     def validate_nft(cls, v: str) -> str:
-        if v not in NFT_TYPES:
-            raise ValueError(f"不正なNFT種別: {v}")
-        return v
+        return _normalize_nft_types_value(v)
 
     @field_validator("joined_date")
     @classmethod
@@ -190,9 +210,7 @@ class MemberUpdate(BaseModel):
     def validate_nft(cls, v):
         if v is None:
             return v
-        if v not in NFT_TYPES:
-            raise ValueError(f"不正なNFT種別: {v}")
-        return v
+        return _normalize_nft_types_value(v)
 
 
 @app.get("/api/members")
@@ -373,6 +391,7 @@ async def api_preview(body: PreviewRequest, _user: str = Depends(require_admin))
 class SendEmailRequest(BaseModel):
     nft_types: list[str] = []
     segment: Optional[str] = None  # "lucky_only" | "lucky_and_special"
+    confirm_all: bool = False
     subject: str = Field(min_length=1)
     body: str = Field(min_length=1)
 
@@ -396,6 +415,11 @@ async def api_send_email(
                     seen_emails.add(m["email"])
                     recipients.append(m)
     else:
+        if not body.confirm_all:
+            raise HTTPException(
+                status_code=400,
+                detail="全員送信には confirm_all=true が必要です",
+            )
         recipients = mbr.get_all_members()
 
     if not recipients:
@@ -527,6 +551,8 @@ def _process_approval(approval_id: int, action: str, body_override: Optional[str
         raise HTTPException(status_code=404, detail="承認データが見つかりません")
     if approval["status"] != "waiting":
         raise HTTPException(status_code=409, detail=f"既に処理済み (status: {approval['status']})")
+    if not db.claim_pending_approval(approval_id, handled_by=user):
+        raise HTTPException(status_code=409, detail="同時処理のため承認に失敗しました。再読み込みしてください。")
 
     if action == "reject":
         db.update_approval_status(approval_id, "rejected", handled_by=user)
@@ -541,7 +567,11 @@ def _process_approval(approval_id: int, action: str, body_override: Optional[str
             body=final_body,
             in_reply_to_message_id=approval.get("original_message_id"),
         )
+    except mail.TestModeBlockedError as e:
+        db.release_pending_approval(approval_id)
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
+        db.release_pending_approval(approval_id)
         log.exception("Approval send failure")
         raise HTTPException(status_code=500, detail=f"送信エラー: {e}")
 
@@ -607,6 +637,9 @@ async def webhook_email(
     message_id = data.get("message_id") or data.get("id") or ""
     in_reply_to = data.get("in_reply_to") or ""
     email_id = data.get("email_id") or data.get("id") or ""
+    if message_id and db.has_received_message_id(message_id):
+        log.info("Webhook duplicate skipped by message_id=%s", message_id)
+        return {"status": "duplicate"}
 
     # 本文が無い場合（email.received の webhook はメタデータのみ）、APIで取得
     if event_type == "email.received" and not body_text and email_id:
@@ -640,13 +673,16 @@ async def webhook_email(
     if not sender_email or not body_text:
         log.warning("Webhook ignored: missing sender or body (type=%s email_id=%s)", event_type, email_id)
         return JSONResponse({"status": "ignored"})
+    if message_id and db.has_received_message_id(message_id):
+        log.info("Webhook duplicate skipped after hydrate by message_id=%s", message_id)
+        return {"status": "duplicate"}
 
     def process():
         member = mbr.get_member_by_email(sender_email)
         is_member = member is not None
         nft_type = member["nft_type"] if member else "不明"
 
-        history = db.get_recent_exchange(sender_email)
+        history = db.get_recent_exchange(sender_email, limit=AI_HISTORY_DEPTH)
         purchase_summary = db.get_purchase_summary(sender_email) if is_member else None
 
         try:
@@ -667,7 +703,7 @@ async def webhook_email(
                 "needs_human": True, "reason": f"AI生成エラー: {e}",
             }
 
-        received_id = db.record_received_email(
+        received_id, created = db.record_received_email_if_new(
             sender_email=sender_email,
             sender_name=sender_name,
             subject=subject,
@@ -677,6 +713,9 @@ async def webhook_email(
             message_id=message_id,
             in_reply_to=in_reply_to,
         )
+        if not created:
+            log.info("Webhook duplicate insert skipped for message_id=%s", message_id)
+            return
 
         if result.get("needs_human"):
             approval_id = db.create_pending_approval(

@@ -23,6 +23,7 @@ AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.75"))
 AI_HISTORY_DEPTH = int(os.getenv("AI_HISTORY_DEPTH", "5"))
 # True にすると AI の判断によらず必ず人手承認（Telegram）に回す
 ALWAYS_HUMAN_APPROVAL = os.getenv("ALWAYS_HUMAN_APPROVAL", "true").lower() == "true"
+PUBLIC_CHECK_EXPOSE_DETAILS = os.getenv("PUBLIC_CHECK_EXPOSE_DETAILS", "false").lower() == "true"
 AI_KNOWLEDGE_PATH = os.getenv(
     "AI_KNOWLEDGE_PATH",
     os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),
@@ -46,7 +47,12 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 _raw_cors = os.getenv("CORS_ORIGINS", "")
 CORS_ORIGINS: list[str] = [o.strip() for o in _raw_cors.split(",") if o.strip()]
 # Vercel preview などワイルドカード正規表現で許可。空文字は無視。
-CORS_ORIGIN_REGEX: str = os.getenv("CORS_ORIGIN_REGEX", "")
+_raw_cors_regex = os.getenv("CORS_ORIGIN_REGEX", "").strip()
+# 旧設定値 "https://.*.vercel.app" は意図せぬマッチを含むため、安全な正規表現に補正
+if _raw_cors_regex == "https://.*.vercel.app":
+    CORS_ORIGIN_REGEX: str = r"^https://([a-zA-Z0-9-]+\.)*vercel\.app$"
+else:
+    CORS_ORIGIN_REGEX = _raw_cors_regex
 
 # ── Welcome email ───────────────────────────────────────
 SEND_WELCOME_EMAIL = os.getenv("SEND_WELCOME_EMAIL", "true").lower() == "true"

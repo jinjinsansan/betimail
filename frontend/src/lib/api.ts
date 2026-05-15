@@ -90,7 +90,13 @@ export const api = {
   },
 
   send: {
-    bulk: (params: { nft_types: string[]; subject: string; body: string; segment?: string | null }) =>
+    bulk: (params: {
+      nft_types: string[];
+      subject: string;
+      body: string;
+      segment?: string | null;
+      confirm_all?: boolean;
+    }) =>
       request<{ status: string; job_id: number; count: number }>("/api/send", {
         method: "POST", body: JSON.stringify(params),
       }),

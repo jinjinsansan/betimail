@@ -3,11 +3,13 @@ import json
 import os
 from playwright.sync_api import sync_playwright
 
-EMAIL = "admin@gmail.com"
-PASSWORD = "ArT73HBzxdsfAX"
+EMAIL = os.getenv("NFTPORTAL_ADMIN_EMAIL", "admin@gmail.com")
+PASSWORD = os.getenv("NFTPORTAL_ADMIN_PASSWORD", "")
 
 
 def main():
+    if not PASSWORD:
+        raise RuntimeError("NFTPORTAL_ADMIN_PASSWORD が未設定です")
     requests_seen = []
     responses_seen = []
     os.makedirs("exports", exist_ok=True)

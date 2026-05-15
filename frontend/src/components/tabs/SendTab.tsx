@@ -147,6 +147,7 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
       const r = await api.send.bulk({
         nft_types: selectedNfts,
         segment: segment || null,
+        confirm_all: !segment && selectedNfts.length === 0,
         subject, body,
       });
       notify(`送信開始: ${r.count}名 (ジョブID ${r.job_id})`);

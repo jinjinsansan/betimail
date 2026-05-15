@@ -77,10 +77,12 @@ export default function CheckPage() {
           <div className="check-result check-ok">
             <div className="check-result-head">
               <I.CheckCircle />
-              <h2>{result.name || "ご登録者"} 様、ご報告いたします。</h2>
+              <h2>{result.name || "ご登録"} が確認できました。</h2>
             </div>
             <p className="check-result-body">
-              {result.name || "あなた"} 様は以下の NFT をご購入されておられます：
+              {(result.nft_types || []).length > 0
+                ? `${result.name || "あなた"} 様は以下の NFT をご購入されておられます：`
+                : "メルマガ配信リストへの登録を確認しました。"}
             </p>
             <div className="check-nft-list">
               {(result.nft_types || []).map((t) => (

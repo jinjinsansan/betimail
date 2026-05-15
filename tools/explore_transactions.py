@@ -5,11 +5,13 @@ import sys
 from collections import Counter
 from playwright.sync_api import sync_playwright
 
-EMAIL = "admin@gmail.com"
-PASSWORD = "gyGwngF43N3W9jEC92QE"
+EMAIL = os.getenv("LUCKY_ADMIN_EMAIL", "admin@gmail.com")
+PASSWORD = os.getenv("LUCKY_ADMIN_PASSWORD", "")
 
 
 def login(page):
+    if not PASSWORD:
+        raise RuntimeError("LUCKY_ADMIN_PASSWORD が未設定です")
     page.goto("https://luckymustard.uk/", wait_until="domcontentloaded", timeout=30000)
     page.wait_for_selector('input#username', timeout=15000)
     page.locator('input#username').fill(EMAIL)

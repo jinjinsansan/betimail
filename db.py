@@ -155,6 +155,14 @@ def init_db() -> None:
         _ensure_column(conn, "received_emails", "in_reply_to", "in_reply_to TEXT")
         _ensure_column(conn, "pending_approvals", "handled_at", "handled_at TEXT")
         _ensure_column(conn, "pending_approvals", "handled_by", "handled_by TEXT")
+        try:
+            conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_recv_message_id_unique
+                   ON received_emails(message_id)
+                   WHERE message_id IS NOT NULL AND message_id <> ''"""
+            )
+        except sqlite3.IntegrityError:
+            log.warning("Skipping unique index idx_recv_message_id_unique due to existing duplicates")
     log.info("DB initialized at %s", DB_PATH)
 
 
@@ -194,15 +202,69 @@ def record_received_email(
     in_reply_to: Optional[str] = None,
 ) -> int:
     with get_conn() as conn:
-        cur = conn.execute(
-            """INSERT INTO received_emails
-               (sender_email, sender_name, subject, body, received_at,
-                ai_draft, ai_confidence, message_id, in_reply_to)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (sender_email, sender_name, subject, body, datetime.now().isoformat(),
-             ai_draft, ai_confidence, message_id, in_reply_to),
-        )
-        return cur.lastrowid
+        try:
+            cur = conn.execute(
+                """INSERT INTO received_emails
+                   (sender_email, sender_name, subject, body, received_at,
+                    ai_draft, ai_confidence, message_id, in_reply_to)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sender_email, sender_name, subject, body, datetime.now().isoformat(),
+                 ai_draft, ai_confidence, message_id, in_reply_to),
+            )
+            return cur.lastrowid
+        except sqlite3.IntegrityError:
+            if message_id:
+                row = conn.execute(
+                    "SELECT id FROM received_emails WHERE message_id = ?",
+                    (message_id,),
+                ).fetchone()
+                if row:
+                    return row["id"]
+            raise
+
+
+def record_received_email_if_new(
+    sender_email: str,
+    sender_name: str,
+    subject: str,
+    body: str,
+    ai_draft: Optional[str] = None,
+    ai_confidence: Optional[float] = None,
+    message_id: Optional[str] = None,
+    in_reply_to: Optional[str] = None,
+) -> tuple[int, bool]:
+    """受信メールを記録。message_id 重複時は既存 id を返し、新規作成フラグを False にする。"""
+    with get_conn() as conn:
+        try:
+            cur = conn.execute(
+                """INSERT INTO received_emails
+                   (sender_email, sender_name, subject, body, received_at,
+                    ai_draft, ai_confidence, message_id, in_reply_to)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (sender_email, sender_name, subject, body, datetime.now().isoformat(),
+                 ai_draft, ai_confidence, message_id, in_reply_to),
+            )
+            return cur.lastrowid, True
+        except sqlite3.IntegrityError:
+            if message_id:
+                row = conn.execute(
+                    "SELECT id FROM received_emails WHERE message_id = ?",
+                    (message_id,),
+                ).fetchone()
+                if row:
+                    return row["id"], False
+            raise
+
+
+def has_received_message_id(message_id: str) -> bool:
+    if not message_id:
+        return False
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM received_emails WHERE message_id = ? LIMIT 1",
+            (message_id,),
+        ).fetchone()
+        return row is not None
 
 
 def update_received_status(received_id: int, status: str) -> None:
@@ -269,6 +331,42 @@ def update_approval_status(approval_id: int, status: str, handled_by: str = "") 
             """UPDATE received_emails SET status = ?
                WHERE id = (SELECT received_email_id FROM pending_approvals WHERE id = ?)""",
             (status, approval_id),
+        )
+
+
+def claim_pending_approval(approval_id: int, handled_by: str = "") -> bool:
+    """status=waiting の承認のみを原子的に processing に遷移。成功時 True。"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE pending_approvals
+               SET status = 'processing', handled_at = ?, handled_by = ?
+               WHERE id = ? AND status = 'waiting'""",
+            (now, handled_by, approval_id),
+        )
+        if cur.rowcount == 0:
+            return False
+        conn.execute(
+            """UPDATE received_emails SET status = 'processing'
+               WHERE id = (SELECT received_email_id FROM pending_approvals WHERE id = ?)""",
+            (approval_id,),
+        )
+        return True
+
+
+def release_pending_approval(approval_id: int) -> None:
+    """送信失敗時などに processing から waiting へ戻す。"""
+    with get_conn() as conn:
+        conn.execute(
+            """UPDATE pending_approvals
+               SET status = 'waiting', handled_at = NULL, handled_by = NULL
+               WHERE id = ? AND status = 'processing'""",
+            (approval_id,),
+        )
+        conn.execute(
+            """UPDATE received_emails SET status = 'pending'
+               WHERE id = (SELECT received_email_id FROM pending_approvals WHERE id = ?)""",
+            (approval_id,),
         )
 
 

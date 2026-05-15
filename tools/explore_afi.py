@@ -4,11 +4,13 @@ import os
 from collections import Counter
 from playwright.sync_api import sync_playwright
 
-EMAIL = "admin@gmail.com"
-PASSWORD = "1H22uFX5Nm0ZLlGiihZi"
+EMAIL = os.getenv("AFI_ADMIN_EMAIL", "admin@gmail.com")
+PASSWORD = os.getenv("AFI_ADMIN_PASSWORD", "")
 
 
 def main():
+    if not PASSWORD:
+        raise RuntimeError("AFI_ADMIN_PASSWORD が未設定です")
     api_endpoints: dict[str, dict] = {}
 
     with sync_playwright() as p:

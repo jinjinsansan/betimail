@@ -12,11 +12,13 @@ import os
 from playwright.sync_api import sync_playwright
 
 
-EMAIL = "admin@gmail.com"
-PASSWORD = "1H22uFX5Nm0ZLlGiihZi"
+EMAIL = os.getenv("AFI_ADMIN_EMAIL", "admin@gmail.com")
+PASSWORD = os.getenv("AFI_ADMIN_PASSWORD", "")
 
 
 def login(page):
+    if not PASSWORD:
+        raise RuntimeError("AFI_ADMIN_PASSWORD が未設定です")
     page.goto("https://afi.irah.uk/auth/login", wait_until="domcontentloaded", timeout=30000)
     page.wait_for_selector('input#username, input[type="email"]', timeout=15000)
     page.locator('input#username, input[type="email"]').first.fill(EMAIL)

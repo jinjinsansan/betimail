@@ -3,11 +3,13 @@ import json
 import os
 from playwright.sync_api import sync_playwright
 
-EMAIL = "admin@gmail.com"
-PASSWORD = "gyGwngF43N3W9jEC92QE"
+EMAIL = os.getenv("LUCKY_ADMIN_EMAIL", "admin@gmail.com")
+PASSWORD = os.getenv("LUCKY_ADMIN_PASSWORD", "")
 
 
 def main():
+    if not PASSWORD:
+        raise RuntimeError("LUCKY_ADMIN_PASSWORD が未設定です")
     os.makedirs("exports", exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)

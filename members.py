@@ -14,6 +14,20 @@ _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def _normalize_nft_type_field(nft_type: str) -> str:
+    raw = [t.strip() for t in (nft_type or "").split(",") if t.strip()]
+    if not raw:
+        raise ValueError("NFT種別は必須です")
+    unknown = [t for t in raw if t not in NFT_TYPES]
+    if unknown:
+        raise ValueError(f"不正なNFT種別: {', '.join(unknown)}")
+    ordered = []
+    for t in NFT_TYPES:
+        if t in raw and t not in ordered:
+            ordered.append(t)
+    return ", ".join(ordered)
+
+
 def _ensure_csv() -> None:
     if not os.path.exists(MEMBERS_CSV_PATH):
         os.makedirs(os.path.dirname(MEMBERS_CSV_PATH), exist_ok=True)
@@ -26,15 +40,15 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
-def _validate(name: str, email: str, nft_type: str, joined_date: str) -> None:
+def _validate(name: str, email: str, nft_type: str, joined_date: str) -> str:
     if not name.strip():
         raise ValueError("名前は必須です")
     if not _EMAIL_RE.match(email):
         raise ValueError(f"メールアドレスの形式が不正です: {email}")
-    if nft_type not in NFT_TYPES:
-        raise ValueError(f"不正なNFT種別: {nft_type}")
+    normalized_nft = _normalize_nft_type_field(nft_type)
     if joined_date and not _DATE_RE.match(joined_date):
         raise ValueError(f"日付は YYYY-MM-DD 形式で指定してください: {joined_date}")
+    return normalized_nft
 
 
 def get_all_members() -> list[dict]:
@@ -83,7 +97,7 @@ def get_member_by_email(email: str) -> Optional[dict]:
 def add_member(name: str, email: str, nft_type: str, joined_date: str, notes: str = "") -> dict:
     name = name.strip()
     email = email.strip()
-    _validate(name, email, nft_type, joined_date)
+    nft_type = _validate(name, email, nft_type, joined_date)
     with _lock:
         existing = get_member_by_email(email)
         if existing:
@@ -124,7 +138,9 @@ def update_member(email: str, **kwargs) -> Optional[dict]:
             if _normalize_email(m["email"]) == target:
                 # 更新前にバリデーション
                 merged = {**m, **{k: v for k, v in kwargs.items() if k in _FIELDS and v is not None}}
-                _validate(merged["name"], merged["email"], merged["nft_type"], merged.get("joined_date", ""))
+                merged["nft_type"] = _validate(
+                    merged["name"], merged["email"], merged["nft_type"], merged.get("joined_date", ""),
+                )
                 # メールアドレスを変更しようとしている場合、重複チェック
                 if _normalize_email(merged["email"]) != target:
                     if any(_normalize_email(o["email"]) == _normalize_email(merged["email"])

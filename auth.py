@@ -73,8 +73,10 @@ def check_credentials(username: str, password: str) -> bool:
 def require_admin(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
     """エンドポイントの依存関係。Bearer トークンを検証する。"""
     if not ADMIN_PASSWORD:
-        # 未設定なら認証なしで通す（開発用）
-        return "anonymous"
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="ADMIN_PASSWORD が未設定のため管理APIは利用できません",
+        )
     if creds is None or creds.scheme.lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

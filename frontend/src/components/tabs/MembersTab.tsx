@@ -25,7 +25,14 @@ export default function MembersTab({ members, notify, onReload }: Props) {
 
   const filtered = useMemo(() => {
     let list = members;
-    if (filterNft) list = list.filter((m) => m.nft_type === filterNft);
+    if (filterNft) {
+      list = list.filter((m) =>
+        (m.nft_type || "")
+          .split(",")
+          .map((t) => t.trim())
+          .includes(filterNft)
+      );
+    }
     if (search) {
       const s = search.toLowerCase();
       list = list.filter((m) =>

@@ -17,11 +17,13 @@ import os
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
-EMAIL = "admin@gmail.com"
-PASSWORD = "ArT73HBzxdsfAX"
+EMAIL = os.getenv("NFTPORTAL_ADMIN_EMAIL", "admin@gmail.com")
+PASSWORD = os.getenv("NFTPORTAL_ADMIN_PASSWORD", "")
 
 
 def login(page):
+    if not PASSWORD:
+        raise RuntimeError("NFTPORTAL_ADMIN_PASSWORD が未設定です")
     page.goto("https://nftportal.site/auth/login", wait_until="networkidle", timeout=30000)
     page.locator('input#username').fill(EMAIL)
     page.locator('input#password').fill(PASSWORD)

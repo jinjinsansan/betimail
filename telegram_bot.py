@@ -152,6 +152,9 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user.username if update.effective_user else "telegram"
 
     if action == "approve":
+        if not db.claim_pending_approval(approval_id, handled_by=user):
+            await query.edit_message_text("⚠️ この依頼は他の操作と競合したため処理できませんでした。")
+            return
         try:
             mail.send_reply(
                 to_email=approval["sender_email"],
@@ -172,6 +175,7 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ 送信完了\n宛先: {approval['sender_email']}"
             )
         except mail.TestModeBlockedError as e:
+            db.release_pending_approval(approval_id)
             log.warning("Test mode blocked: %s", e)
             await query.edit_message_text(
                 f"🚫 TEST_MODE のため送信ブロック\n"
@@ -180,6 +184,7 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"TEST_MODE=false にしてください。"
             )
         except Exception as e:
+            db.release_pending_approval(approval_id)
             log.exception("Telegram approve send failure")
             await query.edit_message_text(f"❌ 送信エラー: {e}")
 
@@ -210,6 +215,9 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif action == "reject":
+        if not db.claim_pending_approval(approval_id, handled_by=user):
+            await query.edit_message_text("⚠️ この依頼は他の操作と競合したため処理できませんでした。")
+            return
         db.update_approval_status(approval_id, "rejected", handled_by=user)
         await query.edit_message_text(f"❌ 却下しました (ID: {approval_id})")
 
@@ -248,7 +256,15 @@ async def _process_direct_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("⚠️ 承認データが見つかりません。")
         context.chat_data.pop("pending_edit", None)
         return
+    if approval.get("status") != "waiting":
+        await update.message.reply_text(f"⚠️ この依頼は既に処理済みです (status: {approval.get('status')})")
+        context.chat_data.pop("pending_edit", None)
+        return
     user = update.effective_user.username if update.effective_user else "telegram"
+    if not db.claim_pending_approval(approval_id, handled_by=user):
+        await update.message.reply_text("⚠️ 他の操作と競合したため送信できませんでした。")
+        context.chat_data.pop("pending_edit", None)
+        return
     try:
         mail.send_reply(
             to_email=approval["sender_email"],
@@ -269,6 +285,7 @@ async def _process_direct_edit(update: Update, context: ContextTypes.DEFAULT_TYP
             f"✅ 修正版を送信しました\n宛先: {approval['sender_email']}"
         )
     except mail.TestModeBlockedError as e:
+        db.release_pending_approval(approval_id)
         log.warning("Test mode blocked: %s", e)
         await update.message.reply_text(
             f"🚫 TEST_MODE のため送信ブロック\n"
@@ -278,6 +295,7 @@ async def _process_direct_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         # 編集モードを維持して再試行できるようにする
         return
     except Exception as e:
+        db.release_pending_approval(approval_id)
         log.exception("Telegram edit send failure")
         await update.message.reply_text(f"❌ 送信エラー: {e}")
     finally:
@@ -289,6 +307,10 @@ async def _process_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, a
     approval = db.get_pending_approval(approval_id)
     if not approval:
         await update.message.reply_text("⚠️ 承認データが見つかりません。")
+        context.chat_data.pop("pending_chat", None)
+        return
+    if approval.get("status") != "waiting":
+        await update.message.reply_text(f"⚠️ この依頼は既に処理済みです (status: {approval.get('status')})")
         context.chat_data.pop("pending_chat", None)
         return
 
