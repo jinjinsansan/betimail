@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { Paged, SentEmail, ReceivedEmail } from "@/lib/types";
 import { nftBadgeClass, nftLabel, statusInfo, fmtDate, debounce } from "@/lib/ui";
@@ -19,8 +19,9 @@ export default function HistoryTab({ notify }: Props) {
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sent, setSent] = useState<Paged<SentEmail>>({ items: [], total: 0 });
   const [received, setReceived] = useState<Paged<ReceivedEmail>>({ items: [], total: 0 });
+  const [expanded, setExpanded] = useState<string | null>(null);
 
-  useEffect(() => { setPage(0); }, [view, search, statusFilter]);
+  useEffect(() => { setPage(0); setExpanded(null); }, [view, search, statusFilter]);
 
   useEffect(() => {
     const load = async () => {
@@ -100,20 +101,44 @@ export default function HistoryTab({ notify }: Props) {
                   <tr><td colSpan={5}><Empty icon={<I.Send />} title="送信履歴がありません" /></td></tr>
                 ) : (filteredItems as SentEmail[]).map((e) => {
                   const s = statusInfo(e.status);
+                  const key = `sent-${e.id}`;
+                  const isOpen = expanded === key;
                   return (
-                    <tr key={e.id}>
-                      <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(e.sent_at)}</span></td>
-                      <td>
-                        <div><b>{e.recipient_name || "(名前なし)"}</b></div>
-                        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{e.recipient_email}</div>
-                      </td>
-                      <td>{e.nft_type ? <span className={`badge ${nftBadgeClass(e.nft_type)}`}>{nftLabel(e.nft_type)}</span> : <span style={{ color: "var(--text-4)" }}>—</span>}</td>
-                      <td>
-                        {e.subject}
-                        {e.error && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 2 }}>{e.error}</div>}
-                      </td>
-                      <td><span className={`badge ${s.cls} dot`}>{s.label}</span></td>
-                    </tr>
+                    <Fragment key={key}>
+                      <tr onClick={() => setExpanded(isOpen ? null : key)} style={{ cursor: "pointer" }}>
+                        <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(e.sent_at)}</span></td>
+                        <td>
+                          <div><b>{e.recipient_name || "(名前なし)"}</b></div>
+                          <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{e.recipient_email}</div>
+                        </td>
+                        <td>{e.nft_type ? <span className={`badge ${nftBadgeClass(e.nft_type)}`}>{nftLabel(e.nft_type)}</span> : <span style={{ color: "var(--text-4)" }}>—</span>}</td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <I.ChevronDown size={14} style={{ color: "var(--text-3)", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flex: "0 0 14px" }} />
+                            <span>{e.subject}</span>
+                          </div>
+                          {e.error && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 2 }}>{e.error}</div>}
+                        </td>
+                        <td><span className={`badge ${s.cls} dot`}>{s.label}</span></td>
+                      </tr>
+                      {isOpen && (
+                        <tr>
+                          <td colSpan={5} style={{ background: "var(--bg-soft)", padding: "16px 20px" }}>
+                            <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 6, fontWeight: 500 }}>
+                              <I.Send size={11} /> 送信本文
+                            </div>
+                            <div className="preview-box" style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.7, background: "var(--bg-elev)" }}>
+                              {e.body || "(本文なし)"}
+                            </div>
+                            {e.resend_id && (
+                              <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-4)", fontFamily: "var(--font-mono)" }}>
+                                Resend ID: {e.resend_id}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -134,17 +159,53 @@ export default function HistoryTab({ notify }: Props) {
                   <tr><td colSpan={5}><Empty icon={<I.Inbox />} title="受信履歴がありません" /></td></tr>
                 ) : (filteredItems as ReceivedEmail[]).map((e) => {
                   const s = statusInfo(e.status);
+                  const key = `received-${e.id}`;
+                  const isOpen = expanded === key;
                   return (
-                    <tr key={e.id}>
-                      <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(e.received_at)}</span></td>
-                      <td>
-                        <div><b>{e.sender_name || "(名前なし)"}</b></div>
-                        <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{e.sender_email}</div>
-                      </td>
-                      <td>{e.subject || "-"}</td>
-                      <td>{e.ai_confidence != null ? <ConfBar value={e.ai_confidence} /> : <span style={{ color: "var(--text-4)" }}>—</span>}</td>
-                      <td><span className={`badge ${s.cls} dot`}>{s.label}</span></td>
-                    </tr>
+                    <Fragment key={key}>
+                      <tr onClick={() => setExpanded(isOpen ? null : key)} style={{ cursor: "pointer" }}>
+                        <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(e.received_at)}</span></td>
+                        <td>
+                          <div><b>{e.sender_name || "(名前なし)"}</b></div>
+                          <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{e.sender_email}</div>
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <I.ChevronDown size={14} style={{ color: "var(--text-3)", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flex: "0 0 14px" }} />
+                            <span>{e.subject || "(件名なし)"}</span>
+                          </div>
+                        </td>
+                        <td>{e.ai_confidence != null ? <ConfBar value={e.ai_confidence} /> : <span style={{ color: "var(--text-4)" }}>—</span>}</td>
+                        <td><span className={`badge ${s.cls} dot`}>{s.label}</span></td>
+                      </tr>
+                      {isOpen && (
+                        <tr>
+                          <td colSpan={5} style={{ background: "var(--bg-soft)", padding: "16px 20px" }}>
+                            <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 6, fontWeight: 500 }}>
+                              <I.Inbox size={11} /> 受信本文
+                            </div>
+                            <div className="preview-box" style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.7, background: "var(--bg-elev)" }}>
+                              {e.body || "(本文なし)"}
+                            </div>
+                            {e.ai_draft && (
+                              <>
+                                <div style={{ fontSize: 12, color: "var(--text-3)", marginTop: 14, marginBottom: 6, fontWeight: 500 }}>
+                                  <I.Sparkle size={11} /> AI 下書き
+                                </div>
+                                <div className="preview-box" style={{ whiteSpace: "pre-wrap", fontSize: 13, lineHeight: 1.7, background: "var(--bg-elev)", borderColor: "rgba(91,91,214,.25)" }}>
+                                  {e.ai_draft}
+                                </div>
+                              </>
+                            )}
+                            {e.message_id && (
+                              <div style={{ marginTop: 8, fontSize: 11, color: "var(--text-4)", fontFamily: "var(--font-mono)" }}>
+                                Message-ID: {e.message_id}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>
