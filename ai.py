@@ -10,7 +10,7 @@ import anthropic
 from typing import Optional
 from config import (
     ANTHROPIC_API_KEY, ANTHROPIC_MODEL, AI_CONFIDENCE_THRESHOLD,
-    AI_HISTORY_DEPTH, AI_KNOWLEDGE_PATH,
+    AI_HISTORY_DEPTH, AI_KNOWLEDGE_PATH, ALWAYS_HUMAN_APPROVAL,
 )
 from logging_config import get_logger
 
@@ -289,6 +289,12 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
             result["reason"] = "DB未登録の方からの問合せ（要本人確認）"
         else:
             result["reason"] = f"[DB未登録] {result['reason']}"
+
+    # 全件人手承認モード (ALWAYS_HUMAN_APPROVAL=true) なら自動送信を無効化
+    if ALWAYS_HUMAN_APPROVAL:
+        result["needs_human"] = True
+        if not result.get("reason"):
+            result["reason"] = "全件人手承認モード（仁氏の最終確認後に送信）"
 
     result.setdefault("reply", "")
     result.setdefault("confidence", conf)

@@ -254,6 +254,17 @@ nftportal.site の出金申請 = 買い取り資金の実支払い記録。
   ↓ それ以外は pending_approvals に格納 + Telegram に承認依頼を通知
 ```
 
+### 5.1.0 送信ポリシー（2026-05-15時点）
+
+**全件 Telegram 承認モード**で運用しています (`ALWAYS_HUMAN_APPROVAL=true`)。
+
+- AI が confidence 高く判定しても **自動送信されず**、必ず Telegram に承認依頼
+- 仁氏が Telegram から **✅承認 / ✏️編集 / ❌却下** を選ぶ
+- 自動送信に切り替えたい場合: `.env` で `ALWAYS_HUMAN_APPROVAL=false`
+  - その場合は信頼度 0.75 以上かつ AI が「安全」と判断したケースのみ自動送信
+
+理由: コミュニティ内容がセンシティブで、AI 任せのリスクを避けるため。
+
 ### 5.1.1 DB未登録者からの問合せ
 
 送信者のメールアドレスが DB にない場合（`get_member_by_email` が None）:

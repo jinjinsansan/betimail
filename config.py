@@ -21,6 +21,8 @@ TELEGRAM_CHAT_IDS: list[str] = [c.strip() for c in _raw_chat_ids.split(",") if c
 # ── AI behavior ─────────────────────────────────────────
 AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.75"))
 AI_HISTORY_DEPTH = int(os.getenv("AI_HISTORY_DEPTH", "5"))
+# True にすると AI の判断によらず必ず人手承認（Telegram）に回す
+ALWAYS_HUMAN_APPROVAL = os.getenv("ALWAYS_HUMAN_APPROVAL", "true").lower() == "true"
 AI_KNOWLEDGE_PATH = os.getenv(
     "AI_KNOWLEDGE_PATH",
     os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),
