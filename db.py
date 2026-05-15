@@ -96,12 +96,36 @@ CREATE TABLE IF NOT EXISTS purchases (
     source_file TEXT
 );
 
+CREATE TABLE IF NOT EXISTS withdraw_requests (
+    -- nftportal.site の出金申請（会員権NFT 等の買い取り資金支払い）
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id INTEGER UNIQUE,          -- nftportal の出金申請レコード id
+    email TEXT NOT NULL,
+    name TEXT,
+    user_id INTEGER,                     -- nftportal の user_id
+    amount_usdt REAL NOT NULL,           -- 支払額 (USDT)
+    destination TEXT,                    -- 送金先ウォレットアドレス
+    type INTEGER,
+    status INTEGER,                      -- nftportal 側の status (2 = 完了)
+    requested_at TEXT,                   -- created_at (申請日時)
+    action_at TEXT,                      -- 処理日時
+    secret_code TEXT,
+    packet TEXT,
+    title TEXT,
+    nft_kind TEXT DEFAULT '会員権NFT',    -- 対象 NFT 種別 (現状は会員権のみ)
+    raw_json TEXT,                       -- 元レコード保管
+    imported_at TEXT NOT NULL,
+    notified_at TEXT                     -- Telegram 通知済みのフラグ
+);
+
 CREATE INDEX IF NOT EXISTS idx_sent_recipient ON sent_emails(recipient_email);
 CREATE INDEX IF NOT EXISTS idx_recv_sender ON received_emails(sender_email);
 CREATE INDEX IF NOT EXISTS idx_recv_status ON received_emails(status);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status);
 CREATE INDEX IF NOT EXISTS idx_purchases_email ON purchases(email);
 CREATE INDEX IF NOT EXISTS idx_purchases_nft ON purchases(nft_type);
+CREATE INDEX IF NOT EXISTS idx_withdraws_email ON withdraw_requests(email);
+CREATE INDEX IF NOT EXISTS idx_withdraws_external ON withdraw_requests(external_id);
 """
 
 
@@ -527,3 +551,111 @@ def count_purchases() -> int:
 def distinct_emails_in_purchases() -> int:
     with get_conn() as conn:
         return conn.execute("SELECT COUNT(DISTINCT email) AS c FROM purchases").fetchone()["c"]
+
+
+# ── 出金申請 (買い取り資金) ──────────────────────────────
+def upsert_withdraw(record: dict) -> bool:
+    """external_id が既存なら更新、なければ挿入。新規 (=新着) なら True を返す。"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id FROM withdraw_requests WHERE external_id = ?",
+            (record["external_id"],),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                """UPDATE withdraw_requests
+                   SET email=?, name=?, user_id=?, amount_usdt=?, destination=?,
+                       type=?, status=?, requested_at=?, action_at=?, secret_code=?,
+                       packet=?, title=?, nft_kind=?, raw_json=?
+                   WHERE id=?""",
+                (
+                    record.get("email", "").strip().lower(),
+                    record.get("name"),
+                    record.get("user_id"),
+                    record.get("amount_usdt"),
+                    record.get("destination"),
+                    record.get("type"),
+                    record.get("status"),
+                    record.get("requested_at"),
+                    record.get("action_at"),
+                    record.get("secret_code"),
+                    record.get("packet"),
+                    record.get("title"),
+                    record.get("nft_kind", "会員権NFT"),
+                    record.get("raw_json"),
+                    existing["id"],
+                ),
+            )
+            return False
+        conn.execute(
+            """INSERT INTO withdraw_requests
+               (external_id, email, name, user_id, amount_usdt, destination, type, status,
+                requested_at, action_at, secret_code, packet, title, nft_kind, raw_json, imported_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record["external_id"],
+                record.get("email", "").strip().lower(),
+                record.get("name"),
+                record.get("user_id"),
+                record.get("amount_usdt"),
+                record.get("destination"),
+                record.get("type"),
+                record.get("status"),
+                record.get("requested_at"),
+                record.get("action_at"),
+                record.get("secret_code"),
+                record.get("packet"),
+                record.get("title"),
+                record.get("nft_kind", "会員権NFT"),
+                record.get("raw_json"),
+                now,
+            ),
+        )
+        return True
+
+
+def list_withdraws(limit: int = 200, email: Optional[str] = None) -> list[dict]:
+    q = "SELECT * FROM withdraw_requests"
+    args: list = []
+    if email:
+        q += " WHERE email = ?"
+        args.append(email.strip().lower())
+    q += " ORDER BY requested_at DESC LIMIT ?"
+    args.append(limit)
+    with get_conn() as conn:
+        return [dict(r) for r in conn.execute(q, args).fetchall()]
+
+
+def get_withdraw_summary_by_email(email: str) -> dict:
+    """指定 email の買い取り資金支払い集計。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM withdraw_requests WHERE email = ? ORDER BY requested_at ASC",
+            (email.strip().lower(),),
+        ).fetchall()
+    total = sum((r["amount_usdt"] or 0) for r in rows)
+    return {
+        "email": email,
+        "count": len(rows),
+        "total_usdt": total,
+        "withdraws": [dict(r) for r in rows],
+    }
+
+
+def mark_withdraw_notified(external_id: int) -> None:
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE withdraw_requests SET notified_at = ? WHERE external_id = ?",
+            (now, external_id),
+        )
+
+
+def unnotified_withdraws() -> list[dict]:
+    """まだ Telegram 通知してない withdraw レコード。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM withdraw_requests WHERE notified_at IS NULL ORDER BY requested_at ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
