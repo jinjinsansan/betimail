@@ -4,13 +4,35 @@ SendParams は TypedDict なので **kwargs ではなく dict として渡す必
 import html as html_lib
 import resend
 from typing import Optional
-from config import RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_FROM_NAME
+from config import (
+    RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_FROM_NAME,
+    TEST_MODE, TEST_ALLOWED_RECIPIENTS,
+)
 from logging_config import get_logger
 
 log = get_logger(__name__)
 
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
+
+
+class TestModeBlockedError(RuntimeError):
+    """TEST_MODE が有効で、宛先が許可リストに無い場合に発生。"""
+
+
+def _ensure_recipient_allowed(to_email: str) -> None:
+    if not TEST_MODE:
+        return
+    addr = (to_email or "").strip().lower()
+    if addr not in TEST_ALLOWED_RECIPIENTS:
+        log.warning(
+            "🚫 TEST_MODE: blocked send to %s (allowed: %s)",
+            to_email, TEST_ALLOWED_RECIPIENTS,
+        )
+        raise TestModeBlockedError(
+            f"TEST_MODE のため {to_email} への送信は禁止されています。"
+            f"許可アドレス: {', '.join(TEST_ALLOWED_RECIPIENTS) or '(なし)'}"
+        )
 
 
 def _addr(email: str, name: str) -> str:
@@ -31,7 +53,12 @@ def send_email(
     headers: Optional[dict[str, str]] = None,
     reply_to: Optional[str] = None,
 ) -> str:
-    """メール送信。成功時に resend の email id を返す。失敗時は例外。"""
+    """メール送信。成功時に resend の email id を返す。失敗時は例外。
+
+    TEST_MODE=true の時、TEST_ALLOWED_RECIPIENTS 以外への送信は
+    TestModeBlockedError を投げて拒否する。
+    """
+    _ensure_recipient_allowed(to_email)
     if not RESEND_API_KEY:
         raise RuntimeError("RESEND_API_KEY が設定されていません")
     if not RESEND_FROM_EMAIL:

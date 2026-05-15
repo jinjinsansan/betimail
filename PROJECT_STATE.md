@@ -295,6 +295,30 @@ nftportal.site の出金申請 = 買い取り資金の実支払い記録。
 
 終了するには `/cancel` を送信。
 
+### 5.1.0.5 TEST_MODE セーフモード（2026-05-15 から有効）
+
+**現在は本番運用前の動作確認フェーズのため、`TEST_MODE=true`** です。
+
+- `mail.send_email()` / `mail.send_reply()` は `TEST_ALLOWED_RECIPIENTS` (`.env` でカンマ区切り) に
+  含まれるアドレス**以外**への送信を `TestModeBlockedError` で完全ブロック
+- 現在の許可アドレス: `goldbenchan@gmail.com` (仁氏自身)
+- Telegram の承認ボタンを押しても、宛先が許可外なら「🚫 TEST_MODE のため送信ブロック」と返す
+- 一括送信 (`/api/send`) も同じく影響する
+
+#### 本番運用への切り替え方
+
+VPS で:
+```bash
+ssh betimail-vps "sed -i 's/^TEST_MODE=.*/TEST_MODE=false/' /opt/betimail/.env && \
+  docker compose -f /opt/betimail/docker-compose.yml restart betimail"
+```
+
+#### 過去の事故
+
+2026-05-15 に Telegram の `✏️ 直接編集` ボタンの動作確認中、
+「どうやって編集する？」というテキストがそのまま `alichaaaan1003@gmail.com` (実在の会員) に送信された。
+直後にお詫びメールを送信し、TEST_MODE を導入した。
+
 ### 5.1.0 送信ポリシー（2026-05-15時点）
 
 **全件 Telegram 承認モード**で運用しています (`ALWAYS_HUMAN_APPROVAL=true`)。

@@ -28,6 +28,15 @@ AI_KNOWLEDGE_PATH = os.getenv(
     os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),
 )
 
+# ── テストセーフモード ──────────────────────────────────
+# True のとき、TEST_ALLOWED_RECIPIENTS に列挙したアドレス以外への
+# 実メール送信を完全にブロックする。本番運用時は false に。
+TEST_MODE = os.getenv("TEST_MODE", "true").lower() == "true"
+_raw_test_recipients = os.getenv("TEST_ALLOWED_RECIPIENTS", "")
+TEST_ALLOWED_RECIPIENTS: list[str] = [
+    e.strip().lower() for e in _raw_test_recipients.split(",") if e.strip()
+]
+
 # ── Auth ────────────────────────────────────────────────
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")

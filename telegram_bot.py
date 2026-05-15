@@ -171,6 +171,14 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(
                 f"✅ 送信完了\n宛先: {approval['sender_email']}"
             )
+        except mail.TestModeBlockedError as e:
+            log.warning("Test mode blocked: %s", e)
+            await query.edit_message_text(
+                f"🚫 TEST_MODE のため送信ブロック\n"
+                f"宛先 {approval['sender_email']} は許可リスト外です。\n\n"
+                f"本番運用に切り替えるには /opt/betimail/.env で\n"
+                f"TEST_MODE=false にしてください。"
+            )
         except Exception as e:
             log.exception("Telegram approve send failure")
             await query.edit_message_text(f"❌ 送信エラー: {e}")
@@ -260,6 +268,15 @@ async def _process_direct_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             f"✅ 修正版を送信しました\n宛先: {approval['sender_email']}"
         )
+    except mail.TestModeBlockedError as e:
+        log.warning("Test mode blocked: %s", e)
+        await update.message.reply_text(
+            f"🚫 TEST_MODE のため送信ブロック\n"
+            f"宛先 {approval['sender_email']} は許可リスト外です。\n"
+            f"修正本文は破棄せず保持しています。"
+        )
+        # 編集モードを維持して再試行できるようにする
+        return
     except Exception as e:
         log.exception("Telegram edit send failure")
         await update.message.reply_text(f"❌ 送信エラー: {e}")
