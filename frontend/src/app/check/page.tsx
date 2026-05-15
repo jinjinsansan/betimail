@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, FormEvent, KeyboardEvent } from "react";
+import Image from "next/image";
 import { api } from "@/lib/api";
 import { I } from "@/lib/icons";
 import { nftBadgeClass, nftLabel } from "@/lib/ui";
@@ -8,6 +9,7 @@ type Result =
   | { found: true; name?: string; nft_types?: string[] }
   | { found: false }
   | null;
+type Verification = { masked_email?: string; expires_in?: number } | null;
 
 type Toast = { id: string; msg: string; isError?: boolean };
 
@@ -18,6 +20,8 @@ export default function CheckPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result>(null);
+  const [verification, setVerification] = useState<Verification>(null);
+  const [code, setCode] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -31,6 +35,8 @@ export default function CheckPage() {
     e.preventDefault();
     setError(null);
     setResult(null);
+    setVerification(null);
+    setCode("");
     const trimmed = email.trim().toLowerCase();
     if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
       setError("メールアドレスを正しく入力してください");
@@ -39,7 +45,12 @@ export default function CheckPage() {
     setLoading(true);
     try {
       const r = await api.publicCheck(trimmed);
-      setResult(r);
+      if (r.verification_required) {
+        setVerification({ masked_email: r.masked_email, expires_in: r.expires_in });
+        showToast("確認コードを送信しました");
+      } else {
+        setResult({ found: !!r.found, name: r.name, nft_types: r.nft_types });
+      }
     } catch (e: any) {
       const msg =
         e?.status === 429
@@ -51,9 +62,58 @@ export default function CheckPage() {
     }
   }
 
+  async function verifyCode(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = email.trim().toLowerCase();
+    const normalized = code.trim();
+    if (!normalized) {
+      setError("確認コードを入力してください");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.publicCheckVerify(trimmed, normalized);
+      setVerification(null);
+      setResult(r);
+    } catch (e: any) {
+      const msg =
+        e?.status === 429
+          ? "確認リクエストが多すぎます。少し時間をおいて再試行してください。"
+          : e?.message || "確認コードの検証に失敗しました。";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resendCode() {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.publicCheck(trimmed);
+      if (r.verification_required) {
+        setVerification({ masked_email: r.masked_email, expires_in: r.expires_in });
+        showToast("確認コードを再送しました");
+      }
+    } catch (e: any) {
+      const msg =
+        e?.status === 429
+          ? "再送回数が多すぎます。少し時間をおいてください。"
+          : e?.message || "確認コードの再送に失敗しました。";
+      setError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   function reset() {
     setEmail("");
     setResult(null);
+    setVerification(null);
+    setCode("");
     setError(null);
     setTimeout(() => inputRef.current?.focus(), 50);
   }
@@ -92,7 +152,13 @@ export default function CheckPage() {
             </p>
 
             <div className="check-hero-illust">
-              <img src="/check/community.jpg" alt="beti コミュニティのみんな" />
+              <Image
+                src="/check/community.jpg"
+                alt="beti コミュニティのみんな"
+                width={1200}
+                height={675}
+                priority
+              />
             </div>
 
             <div className="check-hero-meta">
@@ -119,7 +185,7 @@ export default function CheckPage() {
               </p>
             </div>
 
-            {!result && (
+            {!result && !verification && (
               <form onSubmit={submit} className="check-form-body">
                 <div className="check-field">
                   <label className="check-field-label">
@@ -172,6 +238,67 @@ export default function CheckPage() {
                     ご入力いただいたメールアドレスは、配信リストとの照合のみに利用し、当方では保存いたしません。
                   </span>
                 </div>
+              </form>
+            )}
+
+            {!result && verification && (
+              <form onSubmit={verifyCode} className="check-form-body">
+                <div className="check-info-note" style={{ marginBottom: 8 }}>
+                  <I.Info />
+                  <span>
+                    {verification.masked_email || "入力メールアドレス"} 宛に確認コードを送信しました。
+                    {verification.expires_in ? `（有効期限: 約${Math.max(1, Math.floor(verification.expires_in / 60))}分）` : ""}
+                  </span>
+                </div>
+
+                <div className="check-field">
+                  <label className="check-field-label">
+                    確認コード <span className="req">*</span>
+                  </label>
+                  <div className="check-input-wrap">
+                    <I.Lock />
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      className="check-input"
+                      placeholder="6桁コード"
+                      value={code}
+                      onChange={(e) => {
+                        setCode(e.target.value);
+                        setError(null);
+                      }}
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="check-form-error">
+                    <I.AlertTriangle />
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                <button type="submit" className="check-btn lg full" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <span className="spinner" /> 検証中…
+                    </>
+                  ) : (
+                    <>
+                      コードを確認する <I.ArrowRight />
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  className="check-btn ghost full"
+                  onClick={resendCode}
+                  disabled={loading}
+                >
+                  コードを再送する
+                </button>
               </form>
             )}
 

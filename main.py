@@ -1,6 +1,11 @@
 """FastAPI エントリポイント。"""
 import asyncio
+import hashlib
+import hmac
 import json
+import secrets
+import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import date
 from typing import Optional
@@ -32,6 +37,8 @@ from config import (
     NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL,
     CORS_ORIGINS, CORS_ORIGIN_REGEX, AI_HISTORY_DEPTH,
     PUBLIC_CHECK_EXPOSE_DETAILS, PUBLIC_CHECK_EXPOSE_NAME, PUBLIC_CHECK_EXPOSE_NFT_TYPES,
+    PUBLIC_CHECK_REQUIRE_OTP, PUBLIC_CHECK_OTP_TTL_SECONDS, PUBLIC_CHECK_OTP_RESEND_SECONDS,
+    RESEND_API_KEY, RESEND_FROM_EMAIL,
 )
 
 
@@ -95,6 +102,97 @@ class PublicCheckRequest(BaseModel):
     email: EmailStr
 
 
+class PublicCheckVerifyRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=12)
+
+
+_public_check_lock = threading.Lock()
+_public_check_otps: dict[str, dict] = {}
+
+
+def _mask_email(email: str) -> str:
+    local, _, domain = (email or "").partition("@")
+    if not domain:
+        return "***"
+    if len(local) <= 2:
+        local_masked = "*" * len(local)
+    else:
+        local_masked = local[:2] + "*" * max(1, len(local) - 2)
+    return f"{local_masked}@{domain}"
+
+
+def _cleanup_public_check_otps(now_ts: float) -> None:
+    expired = [
+        e for e, rec in _public_check_otps.items()
+        if rec.get("expires_at", 0) < now_ts
+    ]
+    for e in expired:
+        _public_check_otps.pop(e, None)
+
+
+def _build_public_check_result(email: str) -> dict:
+    member = mbr.get_member_by_email(email)
+    if not member:
+        return {"found": False}
+
+    summary = db.get_purchase_summary(member["email"])
+    nft_types = [row["nft_type"] for row in summary.get("by_nft", [])]
+    ordered = []
+    for t in NFT_TYPES:
+        if t in nft_types and t not in ordered:
+            ordered.append(t)
+
+    data: dict = {"found": True}
+    expose_name = PUBLIC_CHECK_EXPOSE_DETAILS or PUBLIC_CHECK_EXPOSE_NAME
+    expose_nft = PUBLIC_CHECK_EXPOSE_DETAILS or PUBLIC_CHECK_EXPOSE_NFT_TYPES
+    if expose_name:
+        data["name"] = member["name"]
+    if expose_nft:
+        data["nft_types"] = ordered
+    return data
+
+
+def _issue_public_check_otp(email: str) -> str:
+    now_ts = time.time()
+    with _public_check_lock:
+        _cleanup_public_check_otps(now_ts)
+        rec = _public_check_otps.get(email)
+        if rec and (now_ts - rec.get("issued_at", 0)) < PUBLIC_CHECK_OTP_RESEND_SECONDS:
+            raise HTTPException(status_code=429, detail="確認コードの再送は少し待ってからお試しください")
+
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        salt = secrets.token_hex(8)
+        digest = hashlib.sha256((salt + code).encode("utf-8")).hexdigest()
+        _public_check_otps[email] = {
+            "salt": salt,
+            "digest": digest,
+            "issued_at": now_ts,
+            "expires_at": now_ts + max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+            "tries": 0,
+        }
+        return code
+
+
+def _verify_public_check_otp(email: str, code: str) -> bool:
+    now_ts = time.time()
+    normalized = (code or "").strip()
+    with _public_check_lock:
+        _cleanup_public_check_otps(now_ts)
+        rec = _public_check_otps.get(email)
+        if not rec:
+            return False
+        rec["tries"] = int(rec.get("tries", 0)) + 1
+        if rec["tries"] > 8:
+            _public_check_otps.pop(email, None)
+            return False
+        digest = hashlib.sha256((rec["salt"] + normalized).encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(rec["digest"], digest):
+            return False
+        _public_check_otps.pop(email, None)
+        return True
+
+
 @app.post("/api/public/check")
 async def api_public_check(
     body: PublicCheckRequest,
@@ -106,33 +204,54 @@ async def api_public_check(
     既に閉じたコミュニティ内の保有情報のため、emailを知っている人にのみ
     意味のある情報。Telegram/メール送信機能は提供しない。
     """
-    limit_public_check(request, str(body.email))
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
     await asyncio.sleep(0.2)
 
-    member = mbr.get_member_by_email(body.email)
-    if not member:
-        return {"found": False}
+    if not PUBLIC_CHECK_REQUIRE_OTP:
+        return _build_public_check_result(email)
 
-    summary = db.get_purchase_summary(member["email"])
-    nft_types = []
-    for row in summary.get("by_nft", []):
-        nft_types.append(row["nft_type"])
+    if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+        raise HTTPException(status_code=503, detail="確認機能は一時的に利用できません")
 
-    # 重複除去・並び固定
-    ordered = []
-    for t in NFT_TYPES:
-        if t in nft_types and t not in ordered:
-            ordered.append(t)
+    code = _issue_public_check_otp(email)
+    body_text = (
+        "beti 配信チェックの確認コードです。\n\n"
+        f"確認コード: {code}\n"
+        f"有効期限: {max(60, PUBLIC_CHECK_OTP_TTL_SECONDS) // 60} 分\n\n"
+        "このコードに心当たりがない場合は破棄してください。"
+    )
+    try:
+        mail.send_email(
+            to_email=email,
+            to_name="",
+            subject="【beti】配信チェック確認コード",
+            body=body_text,
+        )
+    except Exception:
+        log.exception("Public check OTP send failure")
+        raise HTTPException(status_code=503, detail="確認コード送信に失敗しました。時間をおいて再試行してください")
 
-    data: dict = {"found": True}
-    # PUBLIC_CHECK_EXPOSE_DETAILS=true は両方ON（旧フラグ互換）
-    expose_name = PUBLIC_CHECK_EXPOSE_DETAILS or PUBLIC_CHECK_EXPOSE_NAME
-    expose_nft = PUBLIC_CHECK_EXPOSE_DETAILS or PUBLIC_CHECK_EXPOSE_NFT_TYPES
-    if expose_name:
-        data["name"] = member["name"]
-    if expose_nft:
-        data["nft_types"] = ordered
-    return data
+    return {
+        "verification_required": True,
+        "masked_email": _mask_email(email),
+        "expires_in": max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+    }
+
+
+@app.post("/api/public/check/verify")
+async def api_public_check_verify(
+    body: PublicCheckVerifyRequest,
+    request: Request,
+):
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    if not PUBLIC_CHECK_REQUIRE_OTP:
+        return _build_public_check_result(email)
+    if not _verify_public_check_otp(email, body.code):
+        raise HTTPException(status_code=400, detail="確認コードが無効または期限切れです")
+    return _build_public_check_result(email)
 
 
 # ── 認証 ────────────────────────────────────────────────

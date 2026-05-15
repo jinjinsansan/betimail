@@ -1,6 +1,7 @@
 """主要 API のエンドポイント単体テスト。"""
 from fastapi.testclient import TestClient
 import importlib
+import re
 
 
 def _fresh_client(monkeypatch, admin_password: str = "secret123"):
@@ -136,8 +137,7 @@ def test_require_admin_returns_503_when_not_configured(monkeypatch):
     assert r.status_code == 503
 
 
-def test_public_check_shows_name_only_by_default(monkeypatch):
-    """C案: 名前は出すが NFT 種別は隠すのがデフォルト挙動。"""
+def test_public_check_hides_pii_by_default(monkeypatch):
     client = _fresh_client(monkeypatch)
     headers = _auth_headers(client)
     client.post("/api/members", json={
@@ -147,8 +147,45 @@ def test_public_check_shows_name_only_by_default(monkeypatch):
     r = client.post("/api/public/check", json={"email": "y@example.com"})
     assert r.status_code == 200
     payload = r.json()
-    assert payload == {"found": True, "name": "山田太郎"}
-    assert "nft_types" not in payload
+    assert payload == {"found": True}
+
+
+def test_public_check_otp_flow(monkeypatch):
+    monkeypatch.setenv("PUBLIC_CHECK_REQUIRE_OTP", "true")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("RESEND_FROM_EMAIL", "support@example.com")
+    client = _fresh_client(monkeypatch)
+    headers = _auth_headers(client)
+
+    client.post("/api/members", json={
+        "name": "山田太郎", "email": "y@example.com",
+        "nft_type": "会員権NFT", "joined_date": "2024-01-01",
+    }, headers=headers)
+
+    import main
+    sent = {}
+
+    def fake_send_email(to_email, to_name, subject, body, headers=None, reply_to=None):
+        sent["to"] = to_email
+        sent["body"] = body
+        return "mail-id"
+
+    monkeypatch.setattr(main.mail, "send_email", fake_send_email)
+
+    r = client.post("/api/public/check", json={"email": "y@example.com"})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["verification_required"] is True
+    m = re.search(r"([0-9]{6})", sent["body"])
+    assert m
+    code = m.group(1)
+
+    bad = client.post("/api/public/check/verify", json={"email": "y@example.com", "code": "000000"})
+    assert bad.status_code == 400
+
+    ok = client.post("/api/public/check/verify", json={"email": "y@example.com", "code": code})
+    assert ok.status_code == 200
+    assert ok.json() == {"found": True}
 
 
 def test_send_requires_confirm_all(monkeypatch):

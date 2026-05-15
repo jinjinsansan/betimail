@@ -24,11 +24,13 @@ AI_HISTORY_DEPTH = int(os.getenv("AI_HISTORY_DEPTH", "5"))
 # True にすると AI の判断によらず必ず人手承認（Telegram）に回す
 ALWAYS_HUMAN_APPROVAL = os.getenv("ALWAYS_HUMAN_APPROVAL", "true").lower() == "true"
 PUBLIC_CHECK_EXPOSE_DETAILS = os.getenv("PUBLIC_CHECK_EXPOSE_DETAILS", "false").lower() == "true"
-# /api/public/check の応答にメンバー名を含めるか（デフォルト true: 本人確認のため）
-# 列挙対策はレート制限(ratelimit.limit_public_check)で担保している。
-PUBLIC_CHECK_EXPOSE_NAME = os.getenv("PUBLIC_CHECK_EXPOSE_NAME", "true").lower() == "true"
+# /api/public/check の応答にメンバー名を含めるか（デフォルト false: 列挙リスク低減）
+PUBLIC_CHECK_EXPOSE_NAME = os.getenv("PUBLIC_CHECK_EXPOSE_NAME", "false").lower() == "true"
 # /api/public/check の応答に保有NFT種別を含めるか（デフォルト false: 投資規模漏洩防止）
 PUBLIC_CHECK_EXPOSE_NFT_TYPES = os.getenv("PUBLIC_CHECK_EXPOSE_NFT_TYPES", "false").lower() == "true"
+PUBLIC_CHECK_REQUIRE_OTP = os.getenv("PUBLIC_CHECK_REQUIRE_OTP", "false").lower() == "true"
+PUBLIC_CHECK_OTP_TTL_SECONDS = int(os.getenv("PUBLIC_CHECK_OTP_TTL_SECONDS", "600"))
+PUBLIC_CHECK_OTP_RESEND_SECONDS = int(os.getenv("PUBLIC_CHECK_OTP_RESEND_SECONDS", "60"))
 AI_KNOWLEDGE_PATH = os.getenv(
     "AI_KNOWLEDGE_PATH",
     os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),
