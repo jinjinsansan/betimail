@@ -8,4 +8,5 @@ data/betimail.db
 venv/
 _design_input/
 *.zip
+今回のbetimail*.txt
 
