@@ -307,6 +307,103 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
     return result
 
 
+def regenerate_reply(
+    original_subject: str,
+    original_body: str,
+    previous_draft: str,
+    instruction: str,
+    sender_name: str = "",
+    sender_email: str = "",
+    nft_type: str = "不明",
+    purchases: Optional[dict] = None,
+    is_member: bool = True,
+) -> dict:
+    """前回の下書きに対する仁氏からの修正指示を受けて、AI が下書きを再生成する。
+
+    Telegram で「もう少し優しく」「短くまとめて」等の自然言語指示が来た時に呼ぶ。
+    """
+    if client is None:
+        return {
+            "reply": previous_draft,
+            "confidence": 0.0,
+            "needs_human": True,
+            "reason": "ANTHROPIC_API_KEY 未設定で再生成不可",
+        }
+
+    purchase_block = ""
+    if purchases:
+        purchase_block = f"\n\n■ このメンバー様の購入履歴:\n{_format_purchase_summary(purchases)}\n"
+
+    member_status = "beti 登録メンバー" if is_member else "⚠️ 登録未確認（DBに該当なし）"
+
+    current_prompt = f"""仁氏（運営）から、下書きの修正指示が届いています。
+
+【元の受信メール】
+送信者: {sender_name or "不明"} <{sender_email}>
+登録状況: {member_status}
+保有 NFT 種別: {nft_type or "不明"}{purchase_block}
+件名: {original_subject or "(件名なし)"}
+
+本文:
+{original_body}
+
+【前回 AI が作成した下書き】
+{previous_draft}
+
+【仁氏からの修正指示】
+{instruction}
+
+★ 上記指示に従って下書きを書き直してください。
+基本原則（お詫び・誠実・約束しない、署名「beti 運営サポート」）は守りつつ、
+指示の意図をくみ取って修正してください。
+
+submit_reply ツールで提出してください。"""
+
+    try:
+        message = client.messages.create(
+            model=ANTHROPIC_MODEL,
+            max_tokens=2048,
+            system=_build_system_blocks(),
+            tools=[_REPLY_TOOL],
+            tool_choice={"type": "tool", "name": "submit_reply"},
+            messages=[{"role": "user", "content": current_prompt}],
+        )
+    except Exception as e:
+        log.exception("AI regenerate_reply API error")
+        return {
+            "reply": previous_draft,
+            "confidence": 0.0,
+            "needs_human": True,
+            "reason": f"AI再生成エラー: {e}",
+        }
+
+    result: Optional[dict] = None
+    for block in message.content:
+        if getattr(block, "type", None) == "tool_use":
+            result = dict(block.input)
+            break
+    if result is None:
+        text = ""
+        for block in message.content:
+            if getattr(block, "type", None) == "text":
+                text = block.text
+                break
+        result = _fallback_parse(text)
+
+    # 全件人手承認モードなら常に needs_human=True に
+    if ALWAYS_HUMAN_APPROVAL:
+        result["needs_human"] = True
+    if not is_member:
+        result["needs_human"] = True
+
+    result.setdefault("reply", previous_draft)
+    result.setdefault("confidence", 0.7)
+    result.setdefault("needs_human", True)
+    result.setdefault("reason", "再生成")
+    log.info("AI regenerated: conf=%.2f instruction=%r", result["confidence"], instruction[:60])
+    return result
+
+
 def _fallback_parse(text: str) -> dict:
     """JSON ブロック抽出のフォールバック。"""
     text = text.strip()

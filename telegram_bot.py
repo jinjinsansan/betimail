@@ -71,7 +71,10 @@ def _build_keyboard(approval_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("✅ 承認して送信", callback_data=f"approve:{approval_id}"),
-            InlineKeyboardButton("✏️ 修正して送信", callback_data=f"edit:{approval_id}"),
+            InlineKeyboardButton("✏️ 直接編集", callback_data=f"edit:{approval_id}"),
+        ],
+        [
+            InlineKeyboardButton("💬 AI と相談して修正", callback_data=f"chat:{approval_id}"),
         ],
         [
             InlineKeyboardButton("❌ 却下（返信しない）", callback_data=f"reject:{approval_id}"),
@@ -174,11 +177,28 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif action == "edit":
         context.chat_data["pending_edit"] = approval_id
+        context.chat_data.pop("pending_chat", None)
         await query.edit_message_text(
-            f"✏️ 修正モード (承認ID: {approval_id})\n"
+            f"✏️ 直接編集モード (承認ID: {approval_id})\n"
             f"修正した返信文を次のメッセージで送ってください。\n"
             f"送信先: {approval['sender_email']}\n\n"
             f"━━━ 現在の下書き ━━━\n{approval['ai_draft']}"
+        )
+
+    elif action == "chat":
+        # AI 相談モード: 自然言語で指示を送ると AI が下書きを再生成する
+        context.chat_data["pending_chat"] = approval_id
+        context.chat_data.pop("pending_edit", None)
+        await query.edit_message_text(
+            f"💬 AI 相談モード (承認ID: {approval_id})\n"
+            f"次のメッセージで自然言語で指示を送ってください。例:\n"
+            f"  • もう少し優しく書き直して\n"
+            f"  • 短くまとめて\n"
+            f"  • 感謝の言葉を増やして\n"
+            f"  • 個別対応を強調して\n\n"
+            f"送信先: {approval['sender_email']}\n"
+            f"━━━ 現在の下書き ━━━\n{approval['ai_draft'][:600]}\n\n"
+            f"終了するには /cancel を送信"
         )
 
     elif action == "reject":
@@ -189,24 +209,44 @@ async def _handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _allowed_chat(update.effective_chat.id):
         return
-    approval_id = context.chat_data.get("pending_edit")
-    if approval_id is None:
+
+    text = (update.message.text or "").strip()
+
+    # /cancel で相談・編集モード終了
+    if text in ("/cancel", "/end", "/終了"):
+        context.chat_data.pop("pending_edit", None)
+        context.chat_data.pop("pending_chat", None)
+        await update.message.reply_text("ℹ️ モードを終了しました。")
         return
 
+    edit_id = context.chat_data.get("pending_edit")
+    chat_id = context.chat_data.get("pending_chat")
+
+    if edit_id is not None:
+        await _process_direct_edit(update, context, edit_id, text)
+        return
+
+    if chat_id is not None:
+        await _process_ai_chat(update, context, chat_id, text)
+        return
+
+    # 関連なきメッセージは無視
+
+
+async def _process_direct_edit(update: Update, context: ContextTypes.DEFAULT_TYPE, approval_id: int, body: str):
+    """✏️ 直接編集モード: 入力テキストをそのまま送信本文として使う"""
     approval = db.get_pending_approval(approval_id)
     if not approval:
         await update.message.reply_text("⚠️ 承認データが見つかりません。")
         context.chat_data.pop("pending_edit", None)
         return
-
     user = update.effective_user.username if update.effective_user else "telegram"
-    edited_body = update.message.text
     try:
         mail.send_reply(
             to_email=approval["sender_email"],
             to_name=approval["sender_name"] or "",
             original_subject=approval["original_subject"] or "",
-            body=edited_body,
+            body=body,
             in_reply_to_message_id=approval.get("original_message_id"),
         )
         db.record_sent_email(
@@ -214,7 +254,7 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             recipient_name=approval["sender_name"] or "",
             nft_type="",
             subject=f"Re: {approval['original_subject'] or ''}",
-            body=edited_body,
+            body=body,
         )
         db.update_approval_status(approval_id, "approved_edited", handled_by=user)
         await update.message.reply_text(
@@ -227,11 +267,68 @@ async def _handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.chat_data.pop("pending_edit", None)
 
 
+async def _process_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, approval_id: int, instruction: str):
+    """💬 AI 相談モード: 自然言語の指示を AI に渡して下書きを再生成する。"""
+    approval = db.get_pending_approval(approval_id)
+    if not approval:
+        await update.message.reply_text("⚠️ 承認データが見つかりません。")
+        context.chat_data.pop("pending_chat", None)
+        return
+
+    sender_email = approval["sender_email"]
+    sender_name = approval.get("sender_name") or ""
+
+    # AI 再生成に必要なコンテキスト
+    import members as mbr
+    import ai
+    member = mbr.get_member_by_email(sender_email)
+    is_member = member is not None
+    nft_type = member["nft_type"] if member else "不明"
+    purchases = db.get_purchase_summary(sender_email) if is_member else None
+
+    await update.message.reply_text(f"🤖 AI が指示「{instruction[:60]}」で書き直し中…")
+
+    try:
+        result = ai.regenerate_reply(
+            original_subject=approval.get("original_subject") or "",
+            original_body=approval.get("original_body") or "",
+            previous_draft=approval.get("ai_draft") or "",
+            instruction=instruction,
+            sender_name=sender_name,
+            sender_email=sender_email,
+            nft_type=nft_type,
+            purchases=purchases,
+            is_member=is_member,
+        )
+    except Exception as e:
+        log.exception("AI regenerate failure")
+        await update.message.reply_text(f"❌ AI 再生成エラー: {e}")
+        return
+
+    new_draft = result.get("reply", "")
+    if not new_draft:
+        await update.message.reply_text("❌ AI 再生成が空でした")
+        return
+
+    # DB の下書きを書き換え
+    db.update_approval_draft(approval_id, new_draft)
+
+    # 新しい下書きをカード形式で返す（再度ボタン提示）
+    text = (
+        f"💬 AI が書き直しました (承認ID: {approval_id})\n"
+        f"━━━ 新しい下書き ━━━\n{new_draft}\n\n"
+        f"このまま OK なら ✅、さらに指示なら自然言語で送ってください。\n"
+        f"終了は /cancel"
+    )
+    await update.message.reply_text(text, reply_markup=_build_keyboard(approval_id))
+
+
 def build_application() -> Application:
     global _application
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CallbackQueryHandler(_handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _handle_message))
+    # コマンド (/cancel) も含めて受け取る
+    app.add_handler(MessageHandler(filters.TEXT, _handle_message))
     _application = app
     return app
 

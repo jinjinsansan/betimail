@@ -280,6 +280,15 @@ def update_approval_telegram_message(approval_id: int, telegram_message_id: int)
         )
 
 
+def update_approval_draft(approval_id: int, new_draft: str) -> None:
+    """承認待ちの AI下書きを書き換える（Telegram での AI 相談モード時に使用）。"""
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE pending_approvals SET ai_draft = ? WHERE id = ?",
+            (new_draft, approval_id),
+        )
+
+
 # ── 履歴 ────────────────────────────────────────────────
 def get_sent_emails(limit: int = 50, offset: int = 0, search: str = "") -> list[dict]:
     q = "SELECT * FROM sent_emails"
