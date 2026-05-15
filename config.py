@@ -19,8 +19,12 @@ _raw_chat_ids = os.getenv("TELEGRAM_CHAT_ID", "")
 TELEGRAM_CHAT_IDS: list[str] = [c.strip() for c in _raw_chat_ids.split(",") if c.strip()]
 
 # ── AI behavior ─────────────────────────────────────────
-AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.7"))
+AI_CONFIDENCE_THRESHOLD = float(os.getenv("AI_CONFIDENCE_THRESHOLD", "0.75"))
 AI_HISTORY_DEPTH = int(os.getenv("AI_HISTORY_DEPTH", "5"))
+AI_KNOWLEDGE_PATH = os.getenv(
+    "AI_KNOWLEDGE_PATH",
+    os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),
+)
 
 # ── Auth ────────────────────────────────────────────────
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
