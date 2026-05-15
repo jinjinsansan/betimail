@@ -9,4 +9,10 @@ venv/
 _design_input/
 *.zip
 今回のbetimail*.txt
+# メンバー個人情報を含むCSV（ローカル/VPSのみで管理）
+PH管理*.csv
+会員権管理*.csv
+exports/
+data/_import/
+data/_export/
 

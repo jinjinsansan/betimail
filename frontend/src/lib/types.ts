@@ -93,3 +93,43 @@ export type MemberHistory = {
   sent: SentEmail[];
   received: ReceivedEmail[];
 };
+
+export type Purchase = {
+  id: number;
+  email: string;
+  name: string;
+  nft_type: string;
+  amount_jpy?: number | null;
+  units?: number | null;
+  team?: string;
+  transaction_id?: string;
+  purchased_at?: string;
+  status?: string;
+  returns_usdt?: number | null;
+  notes?: string;
+  imported_at?: string;
+  source_file?: string;
+};
+
+export type PurchaseSummaryRow = {
+  nft_type: string;
+  total_jpy?: number | null;
+  total_units?: number | null;
+  total_returns_usdt?: number | null;
+  first_purchase?: string;
+  purchase_count: number;
+};
+
+export type PurchaseSummary = {
+  email: string;
+  by_nft: PurchaseSummaryRow[];
+  total_count: number;
+  total_jpy: number;
+  total_returns_usdt: number;
+};
+
+export type MemberPurchases = {
+  member: Member;
+  purchases: Purchase[];
+  summary: PurchaseSummary;
+};

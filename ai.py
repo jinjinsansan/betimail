@@ -133,6 +133,35 @@ def _build_system_blocks() -> list[dict]:
     return blocks
 
 
+def _format_purchase_summary(purchases: dict) -> str:
+    """db.get_purchase_summary() の結果を AI 向けテキストに整形。"""
+    by_nft = purchases.get("by_nft") or []
+    if not by_nft:
+        return "（購入履歴の記録なし）"
+    parts = []
+    for row in by_nft:
+        nft = row.get("nft_type", "?")
+        units = row.get("total_units") or 0
+        cnt = row.get("purchase_count") or 0
+        first = row.get("first_purchase") or "?"
+        returns = row.get("total_returns_usdt") or 0
+        jpy = row.get("total_jpy") or 0
+        bits = [f"{cnt}回購入"]
+        if units:
+            bits.append(f"計{units}口")
+        if jpy:
+            bits.append(f"投資¥{jpy:,}")
+        if returns:
+            bits.append(f"還元累計{returns:.2f} USDT")
+        bits.append(f"初購入{first}")
+        parts.append(f"- {nft}: " + " / ".join(bits))
+    total_jpy = purchases.get("total_jpy") or 0
+    total_returns = purchases.get("total_returns_usdt") or 0
+    if total_jpy or total_returns:
+        parts.append(f"\n累計: 投資¥{total_jpy:,} / 還元 {total_returns:.2f} USDT")
+    return "\n".join(parts)
+
+
 def generate_reply(
     sender_name: str,
     sender_email: str,
@@ -140,6 +169,7 @@ def generate_reply(
     original_subject: str,
     original_body: str,
     history: Optional[list[dict]] = None,
+    purchases: Optional[dict] = None,
 ) -> dict:
     """AI返信生成。{reply, confidence, needs_human, reason} を返す。"""
     if client is None:
@@ -152,18 +182,27 @@ def generate_reply(
 
     history_messages = _build_history_messages(history or [])
 
+    purchase_block = ""
+    if purchases:
+        purchase_block = f"\n\n■ このメンバー様の購入履歴（DB記録）:\n{_format_purchase_summary(purchases)}\n"
+
     current_prompt = f"""今回返信すべきメンバー様からのメールです。
 
 送信者名: {sender_name or "不明"}
 送信者メールアドレス: {sender_email}
-保有 NFT 種別: {nft_type or "不明"}
+保有 NFT 種別: {nft_type or "不明"}{purchase_block}
+
 件名: {original_subject or "(件名なし)"}
 
 本文:
 {original_body}
 
 このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
-submit_reply ツールで提出してください。"""
+submit_reply ツールで提出してください。
+
+★ 購入履歴が記載されている場合、メンバー様の事情・損失感を理解した上で
+お返事してください。ただし、具体的な金額・時期・配当の数字は答えず、
+個別の質問は仁氏（運営）に取り次ぐ姿勢を守ってください。"""
 
     messages = history_messages + [{"role": "user", "content": current_prompt}]
 

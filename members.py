@@ -45,7 +45,31 @@ def get_all_members() -> list[dict]:
 
 
 def get_members_by_nft_type(nft_type: str) -> list[dict]:
-    return [m for m in get_all_members() if m["nft_type"] == nft_type]
+    """nft_type を含む（カンマ区切りで複数保有の場合に対応）。"""
+    return [
+        m for m in get_all_members()
+        if nft_type in [t.strip() for t in (m.get("nft_type") or "").split(",")]
+    ]
+
+
+def get_members_by_segment(segment: str) -> list[dict]:
+    """名前付きセグメントで絞り込む。
+
+    - lucky_only: ラッキーマスタードNFT保有 かつ スペシャル非保有 (135名想定)
+    - lucky_and_special: ラッキー かつ スペシャル両方保有 (259名想定)
+    """
+    def types(m: dict) -> set[str]:
+        return {t.strip() for t in (m.get("nft_type") or "").split(",") if t.strip()}
+
+    all_members = get_all_members()
+    if segment == "lucky_only":
+        return [m for m in all_members
+                if "ラッキーマスタードNFT" in types(m) and "スペシャルマスタードNFT" not in types(m)]
+    if segment == "lucky_and_special":
+        t = "ラッキーマスタードNFT"
+        s = "スペシャルマスタードNFT"
+        return [m for m in all_members if t in types(m) and s in types(m)]
+    return []
 
 
 def get_member_by_email(email: str) -> Optional[dict]:

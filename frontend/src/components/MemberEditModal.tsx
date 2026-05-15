@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import type { Member, MemberHistory } from "@/lib/types";
-import { NFT_TYPES, fmtDate, statusInfo } from "@/lib/ui";
+import type { Member, MemberHistory, MemberPurchases } from "@/lib/types";
+import { NFT_TYPES, fmtDate, statusInfo, nftBadgeClass, nftLabel } from "@/lib/ui";
 import { I } from "@/lib/icons";
 import { Modal } from "./common";
 
@@ -23,22 +23,28 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
   const isEdit = mode === "edit";
   const [form, setForm] = useState<Member>(EMPTY);
   const [history, setHistory] = useState<MemberHistory | null>(null);
+  const [purchases, setPurchases] = useState<MemberPurchases | null>(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(isEdit);
+  const [section, setSection] = useState<"info" | "purchases" | "history">("info");
 
   useEffect(() => {
     if (!isEdit || !email) {
       setForm({ ...EMPTY });
       setHistory(null);
+      setPurchases(null);
       return;
     }
     setLoading(true);
-    api.members.history(email)
-      .then((data) => {
-        setForm(data.member);
-        setHistory(data);
+    Promise.all([
+      api.members.history(email).catch(() => null),
+      api.members.purchases(email).catch(() => null),
+    ])
+      .then(([h, p]) => {
+        if (h) { setForm(h.member); setHistory(h); }
+        if (p) setPurchases(p);
+        if (!h && !p) { notify("読み込みエラー", "error"); onClose(); }
       })
-      .catch((e) => { notify(e.message, "error"); onClose(); })
       .finally(() => setLoading(false));
   }, [email, isEdit]);
 
@@ -89,38 +95,56 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
         <p style={{ color: "var(--text-3)", padding: 24, textAlign: "center" }}>読み込み中…</p>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-            <div className="field">
-              <label>名前</label>
-              <input className="input" value={form.name} onChange={(e) => setField("name", e.target.value)} placeholder="山田太郎" />
-            </div>
-            <div className="field">
-              <label>メールアドレス</label>
-              <input className="input" type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} placeholder="yamada@example.com" />
-            </div>
-            <div className="field">
-              <label>NFT種別</label>
-              <select className="select" value={form.nft_type} onChange={(e) => setField("nft_type", e.target.value)}>
-                {NFT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="field">
-              <label>購入日</label>
-              <input className="input" type="date" value={form.joined_date} onChange={(e) => setField("joined_date", e.target.value)} />
-            </div>
-            <div className="field" style={{ gridColumn: "1 / -1" }}>
-              <label>備考</label>
-              <input className="input" value={form.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="任意" />
-            </div>
-          </div>
-
-          {isEdit && events.length > 0 && (
-            <div style={{ marginTop: 20 }}>
-              <div style={{ fontSize: 12, color: "var(--text-2)", fontWeight: 500, marginBottom: 8 }}>
-                過去のやり取り（最新 {Math.min(events.length, 20)} 件）
+          {isEdit && (
+            <div className="chip-row" style={{ marginBottom: 16 }}>
+              <div className={`chip ${section === "info" ? "active" : ""}`} onClick={() => setSection("info")}>
+                基本情報
               </div>
+              <div className={`chip ${section === "purchases" ? "active" : ""}`} onClick={() => setSection("purchases")}>
+                購入履歴 {purchases?.purchases?.length ? <span className="chip-count">· {purchases.purchases.length}</span> : null}
+              </div>
+              <div className={`chip ${section === "history" ? "active" : ""}`} onClick={() => setSection("history")}>
+                やり取り {events.length > 0 ? <span className="chip-count">· {events.length}</span> : null}
+              </div>
+            </div>
+          )}
+
+          {section === "info" && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+              <div className="field">
+                <label>名前</label>
+                <input className="input" value={form.name} onChange={(e) => setField("name", e.target.value)} placeholder="山田太郎" />
+              </div>
+              <div className="field">
+                <label>メールアドレス</label>
+                <input className="input" type="email" value={form.email} onChange={(e) => setField("email", e.target.value)} placeholder="yamada@example.com" />
+              </div>
+              <div className="field" style={{ gridColumn: "1 / -1" }}>
+                <label>NFT種別（複数の場合はカンマ区切り）</label>
+                <input className="input" value={form.nft_type} onChange={(e) => setField("nft_type", e.target.value)} />
+                <div className="field-hint">例: 会員権NFT, パチスロホイホイNFT</div>
+              </div>
+              <div className="field">
+                <label>購入日</label>
+                <input className="input" type="date" value={form.joined_date} onChange={(e) => setField("joined_date", e.target.value)} />
+              </div>
+              <div className="field">
+                <label>備考</label>
+                <input className="input" value={form.notes} onChange={(e) => setField("notes", e.target.value)} placeholder="任意" />
+              </div>
+            </div>
+          )}
+
+          {section === "purchases" && purchases && (
+            <PurchasesSection data={purchases} />
+          )}
+
+          {section === "history" && (
+            events.length === 0 ? (
+              <p style={{ color: "var(--text-3)", padding: 24, textAlign: "center" }}>過去のやり取りはありません</p>
+            ) : (
               <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden" }}>
-                {events.slice(0, 20).map((h, i) => {
+                {events.slice(0, 50).map((h, i) => {
                   const s = statusInfo(h.status);
                   return (
                     <div
@@ -128,7 +152,7 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
                       style={{
                         display: "flex", alignItems: "center", gap: 10,
                         padding: "10px 12px", fontSize: 12.5,
-                        borderBottom: i < Math.min(events.length, 20) - 1 ? "1px solid var(--border)" : "none",
+                        borderBottom: i < Math.min(events.length, 50) - 1 ? "1px solid var(--border)" : "none",
                         background: i % 2 ? "var(--bg-soft)" : "var(--bg-elev)",
                       }}
                     >
@@ -140,10 +164,109 @@ export default function MemberEditModal({ email, mode, onClose, onSaved, notify 
                   );
                 })}
               </div>
-            </div>
+            )
           )}
         </>
       )}
     </Modal>
+  );
+}
+
+function PurchasesSection({ data }: { data: MemberPurchases }) {
+  const summary = data.summary;
+  const purchases = data.purchases;
+
+  if (purchases.length === 0) {
+    return (
+      <p style={{ color: "var(--text-3)", padding: 24, textAlign: "center" }}>
+        購入履歴の記録はありません
+      </p>
+    );
+  }
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
+        <Stat label="購入件数" value={summary.total_count} />
+        <Stat label="投資合計" value={`¥${summary.total_jpy.toLocaleString()}`} />
+        <Stat label="還元累計" value={`${summary.total_returns_usdt.toFixed(2)} USDT`} />
+      </div>
+
+      <div style={{ fontSize: 12, color: "var(--text-2)", fontWeight: 500, marginBottom: 8 }}>
+        NFT 種別ごとの集計
+      </div>
+      <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", overflow: "hidden", marginBottom: 16 }}>
+        {summary.by_nft.map((r, i) => (
+          <div
+            key={i}
+            style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 12px", fontSize: 13,
+              borderBottom: i < summary.by_nft.length - 1 ? "1px solid var(--border)" : "none",
+              background: i % 2 ? "var(--bg-soft)" : "var(--bg-elev)",
+            }}
+          >
+            <span className={`badge ${nftBadgeClass(r.nft_type)}`}>{nftLabel(r.nft_type)}</span>
+            <span style={{ color: "var(--text-3)", fontSize: 12 }}>{r.purchase_count} 回</span>
+            {r.total_units != null && (
+              <span style={{ color: "var(--text-3)", fontSize: 12 }}>{r.total_units} 口</span>
+            )}
+            {r.total_jpy != null && r.total_jpy > 0 && (
+              <span style={{ color: "var(--text-3)", fontSize: 12 }}>¥{r.total_jpy.toLocaleString()}</span>
+            )}
+            {r.total_returns_usdt != null && r.total_returns_usdt > 0 && (
+              <span style={{ marginLeft: "auto", color: "var(--success)", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
+                +{r.total_returns_usdt.toFixed(2)} USDT
+              </span>
+            )}
+            <span style={{ color: "var(--text-4)", fontFamily: "var(--font-mono)", fontSize: 11 }}>初: {r.first_purchase || "-"}</span>
+          </div>
+        ))}
+      </div>
+
+      <details>
+        <summary>個別の購入レコード（{purchases.length} 件）</summary>
+        <div style={{ border: "1px solid var(--border)", borderRadius: "var(--radius)", marginTop: 8, overflow: "hidden", maxHeight: 360, overflowY: "auto" }}>
+          {purchases.map((p, i) => (
+            <div
+              key={p.id}
+              style={{
+                padding: "10px 12px", fontSize: 12,
+                borderBottom: i < purchases.length - 1 ? "1px solid var(--border)" : "none",
+                background: i % 2 ? "var(--bg-soft)" : "var(--bg-elev)",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span className={`badge ${nftBadgeClass(p.nft_type)}`}>{nftLabel(p.nft_type)}</span>
+                <span style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{p.purchased_at || "-"}</span>
+                {p.amount_jpy != null && p.amount_jpy > 0 && (
+                  <span style={{ color: "var(--text-2)" }}>¥{p.amount_jpy.toLocaleString()}</span>
+                )}
+                {p.units != null && p.units > 0 && (
+                  <span style={{ color: "var(--text-3)" }}>· {p.units} 口</span>
+                )}
+                {p.returns_usdt != null && p.returns_usdt > 0 && (
+                  <span style={{ marginLeft: "auto", color: "var(--success)" }}>還元 {p.returns_usdt.toFixed(2)} USDT</span>
+                )}
+              </div>
+              {(p.transaction_id || p.team || p.notes) && (
+                <div style={{ color: "var(--text-4)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+                  {p.team ? `[${p.team}] ` : ""}{p.transaction_id || ""}{p.notes ? ` · ${p.notes}` : ""}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </details>
+    </>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: "var(--radius)", background: "var(--bg-soft)" }}>
+      <div style={{ fontSize: 11, color: "var(--text-3)", fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 18, fontWeight: 600, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+    </div>
   );
 }

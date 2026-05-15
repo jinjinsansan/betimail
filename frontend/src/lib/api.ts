@@ -1,7 +1,7 @@
 import { getToken, clearToken } from "./auth";
 import type {
   Member, Template, Approval, BulkJob, Paged, SentEmail, ReceivedEmail,
-  Health, LoginResponse, MemberHistory,
+  Health, LoginResponse, MemberHistory, MemberPurchases,
 } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
@@ -69,6 +69,8 @@ export const api = {
       request<{ status: string }>(`/api/members/${encodeURIComponent(email)}`, { method: "DELETE" }),
     history: (email: string) =>
       request<MemberHistory>(`/api/members/${encodeURIComponent(email)}/history`),
+    purchases: (email: string) =>
+      request<MemberPurchases>(`/api/members/${encodeURIComponent(email)}/purchases`),
     importCsv: async (file: File) => {
       const fd = new FormData();
       fd.append("file", file);
@@ -80,7 +82,7 @@ export const api = {
   },
 
   send: {
-    bulk: (params: { nft_types: string[]; subject: string; body: string }) =>
+    bulk: (params: { nft_types: string[]; subject: string; body: string; segment?: string | null }) =>
       request<{ status: string; job_id: number; count: number }>("/api/send", {
         method: "POST", body: JSON.stringify(params),
       }),

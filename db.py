@@ -79,10 +79,29 @@ CREATE TABLE IF NOT EXISTS templates (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS purchases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    name TEXT,
+    nft_type TEXT NOT NULL,
+    amount_jpy INTEGER,
+    units INTEGER,
+    team TEXT,
+    transaction_id TEXT,
+    purchased_at TEXT,
+    status TEXT,
+    returns_usdt REAL,
+    notes TEXT,
+    imported_at TEXT NOT NULL,
+    source_file TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_sent_recipient ON sent_emails(recipient_email);
 CREATE INDEX IF NOT EXISTS idx_recv_sender ON received_emails(sender_email);
 CREATE INDEX IF NOT EXISTS idx_recv_status ON received_emails(status);
 CREATE INDEX IF NOT EXISTS idx_approvals_status ON pending_approvals(status);
+CREATE INDEX IF NOT EXISTS idx_purchases_email ON purchases(email);
+CREATE INDEX IF NOT EXISTS idx_purchases_nft ON purchases(nft_type);
 """
 
 
@@ -395,3 +414,116 @@ def delete_template(template_id: int) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM templates WHERE id = ?", (template_id,))
         return cur.rowcount > 0
+
+
+# ── 購入履歴 ────────────────────────────────────────────
+def insert_purchase(record: dict) -> int:
+    """単一の購入レコードを挿入。"""
+    record.setdefault("imported_at", datetime.now().isoformat())
+    with get_conn() as conn:
+        cur = conn.execute(
+            """INSERT INTO purchases
+               (email, name, nft_type, amount_jpy, units, team, transaction_id,
+                purchased_at, status, returns_usdt, notes, imported_at, source_file)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record.get("email", "").strip().lower(),
+                record.get("name", ""),
+                record.get("nft_type", ""),
+                record.get("amount_jpy"),
+                record.get("units"),
+                record.get("team", ""),
+                record.get("transaction_id", ""),
+                record.get("purchased_at", ""),
+                record.get("status", ""),
+                record.get("returns_usdt"),
+                record.get("notes", ""),
+                record["imported_at"],
+                record.get("source_file", ""),
+            ),
+        )
+        return cur.lastrowid
+
+
+def bulk_insert_purchases(records: list[dict]) -> int:
+    """複数まとめて挿入。挿入件数を返す。"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """INSERT INTO purchases
+               (email, name, nft_type, amount_jpy, units, team, transaction_id,
+                purchased_at, status, returns_usdt, notes, imported_at, source_file)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    r.get("email", "").strip().lower(),
+                    r.get("name", ""),
+                    r.get("nft_type", ""),
+                    r.get("amount_jpy"),
+                    r.get("units"),
+                    r.get("team", ""),
+                    r.get("transaction_id", ""),
+                    r.get("purchased_at", ""),
+                    r.get("status", ""),
+                    r.get("returns_usdt"),
+                    r.get("notes", ""),
+                    r.get("imported_at", now),
+                    r.get("source_file", ""),
+                )
+                for r in records
+            ],
+        )
+        return cur.rowcount
+
+
+def get_purchases_by_email(email: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM purchases WHERE email = ? ORDER BY purchased_at ASC",
+            (email.strip().lower(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_purchase_summary(email: str) -> dict:
+    """指定メールの購入集計を返す（AI コンテキスト用）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT nft_type,
+                      SUM(amount_jpy) AS total_jpy,
+                      SUM(units) AS total_units,
+                      SUM(returns_usdt) AS total_returns_usdt,
+                      MIN(purchased_at) AS first_purchase,
+                      COUNT(*) AS purchase_count
+               FROM purchases WHERE email = ?
+               GROUP BY nft_type
+               ORDER BY first_purchase ASC""",
+            (email.strip().lower(),),
+        ).fetchall()
+    return {
+        "email": email,
+        "by_nft": [dict(r) for r in rows],
+        "total_count": sum(r["purchase_count"] for r in rows),
+        "total_jpy": sum((r["total_jpy"] or 0) for r in rows),
+        "total_returns_usdt": sum((r["total_returns_usdt"] or 0) for r in rows),
+    }
+
+
+def clear_purchases(source_file: Optional[str] = None) -> int:
+    """購入レコードを削除（再インポート用）。source_file 指定時はそのファイル分のみ。"""
+    with get_conn() as conn:
+        if source_file:
+            cur = conn.execute("DELETE FROM purchases WHERE source_file = ?", (source_file,))
+        else:
+            cur = conn.execute("DELETE FROM purchases")
+        return cur.rowcount
+
+
+def count_purchases() -> int:
+    with get_conn() as conn:
+        return conn.execute("SELECT COUNT(*) AS c FROM purchases").fetchone()["c"]
+
+
+def distinct_emails_in_purchases() -> int:
+    with get_conn() as conn:
+        return conn.execute("SELECT COUNT(DISTINCT email) AS c FROM purchases").fetchone()["c"]

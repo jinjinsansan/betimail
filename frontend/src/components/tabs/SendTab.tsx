@@ -13,8 +13,20 @@ type Props = {
   notify: (msg: string, type?: "success" | "error" | "info") => void;
 };
 
+type SegmentKey = "lucky_only" | "lucky_and_special";
+
+const SEGMENT_LABELS: Record<SegmentKey, string> = {
+  lucky_only: "ラッキー単独",
+  lucky_and_special: "ラッキー+スペシャル",
+};
+
+function memberNftTypes(m: Member): string[] {
+  return (m.nft_type || "").split(",").map((t) => t.trim()).filter(Boolean);
+}
+
 export default function SendTab({ members, templates, onReload, notify }: Props) {
   const [selectedNfts, setSelectedNfts] = useState<string[]>([]);
+  const [segment, setSegment] = useState<SegmentKey | null>(null);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [preview, setPreview] = useState("本文を入力するとプレビュー表示されます。");
@@ -22,19 +34,60 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
   const [job, setJob] = useState<BulkJob | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
 
+  // NFT 保有数（カンマ区切り対応）
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     NFT_TYPES.forEach((t) => (c[t] = 0));
-    members.forEach((m) => { if (c[m.nft_type] != null) c[m.nft_type]++; });
+    members.forEach((m) => {
+      memberNftTypes(m).forEach((t) => {
+        if (c[t] != null) c[t]++;
+      });
+    });
     return c;
   }, [members]);
 
-  const target = selectedNfts.length === 0
-    ? members
-    : members.filter((m) => selectedNfts.includes(m.nft_type));
+  // セグメント別人数
+  const segmentCounts = useMemo(() => {
+    let lucky_only = 0, lucky_and_special = 0;
+    for (const m of members) {
+      const types = new Set(memberNftTypes(m));
+      const hasLucky = types.has("ラッキーマスタードNFT");
+      const hasSpecial = types.has("スペシャルマスタードNFT");
+      if (hasLucky && !hasSpecial) lucky_only++;
+      if (hasLucky && hasSpecial) lucky_and_special++;
+    }
+    return { lucky_only, lucky_and_special };
+  }, [members]);
+
+  // 送信対象計算
+  const target = useMemo(() => {
+    if (segment === "lucky_only") {
+      return members.filter((m) => {
+        const t = new Set(memberNftTypes(m));
+        return t.has("ラッキーマスタードNFT") && !t.has("スペシャルマスタードNFT");
+      });
+    }
+    if (segment === "lucky_and_special") {
+      return members.filter((m) => {
+        const t = new Set(memberNftTypes(m));
+        return t.has("ラッキーマスタードNFT") && t.has("スペシャルマスタードNFT");
+      });
+    }
+    if (selectedNfts.length === 0) return members;
+    return members.filter((m) => {
+      const t = memberNftTypes(m);
+      return selectedNfts.some((s) => t.includes(s));
+    });
+  }, [members, segment, selectedNfts]);
 
   function toggleNft(t: string) {
+    setSegment(null); // セグメント選択を解除（NFT種別が優先）
     setSelectedNfts((cur) => cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]);
+  }
+
+  function selectSegment(s: SegmentKey) {
+    setSelectedNfts([]); // NFT選択を解除
+    setSegment((cur) => (cur === s ? null : s));
   }
 
   function applyTemplate(id: number) {
@@ -91,7 +144,11 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
     setShowConfirm(false);
     setSending(true);
     try {
-      const r = await api.send.bulk({ nft_types: selectedNfts, subject, body });
+      const r = await api.send.bulk({
+        nft_types: selectedNfts,
+        segment: segment || null,
+        subject, body,
+      });
       notify(`送信開始: ${r.count}名 (ジョブID ${r.job_id})`);
       setJob({ id: r.job_id, total: r.count, sent: 0, failed: 0, status: "running" } as BulkJob);
       pollJob(r.job_id);
@@ -147,9 +204,12 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
 
         <div className="card-body" style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           <div className="field">
-            <label>送信対象</label>
+            <label>送信対象 — NFT種別</label>
             <div className="chip-row">
-              <div className={`chip ${selectedNfts.length === 0 ? "active" : ""}`} onClick={() => setSelectedNfts([])}>
+              <div
+                className={`chip ${selectedNfts.length === 0 && !segment ? "active" : ""}`}
+                onClick={() => { setSelectedNfts([]); setSegment(null); }}
+              >
                 すべて <span className="chip-count">· {members.length}</span>
               </div>
               {NFT_TYPES.map((t) => (
@@ -158,7 +218,28 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
                 </div>
               ))}
             </div>
-            <div className="field-hint">未選択は全員に送信されます。複数選択で OR フィルタ。</div>
+            <div className="field-hint">未選択は全員に送信。複数選択で OR フィルタ。</div>
+          </div>
+
+          <div className="field">
+            <label>送信対象 — セグメント（NFT 種別と排他）</label>
+            <div className="chip-row">
+              <div
+                className={`chip ${segment === "lucky_only" ? "active" : ""}`}
+                onClick={() => selectSegment("lucky_only")}
+              >
+                {SEGMENT_LABELS.lucky_only} <span className="chip-count">· {segmentCounts.lucky_only}</span>
+              </div>
+              <div
+                className={`chip ${segment === "lucky_and_special" ? "active" : ""}`}
+                onClick={() => selectSegment("lucky_and_special")}
+              >
+                {SEGMENT_LABELS.lucky_and_special} <span className="chip-count">· {segmentCounts.lucky_and_special}</span>
+              </div>
+            </div>
+            <div className="field-hint">
+              「ラッキー単独」= ラッキー保有かつスペシャル非保有 / 「ラッキー+スペシャル」= 両方保有。
+            </div>
           </div>
 
           <div className="field">

@@ -157,7 +157,13 @@ class MemberUpdate(BaseModel):
 
 
 @app.get("/api/members")
-async def api_get_members(nft_type: Optional[str] = None, _user: str = Depends(require_admin)):
+async def api_get_members(
+    nft_type: Optional[str] = None,
+    segment: Optional[str] = None,
+    _user: str = Depends(require_admin),
+):
+    if segment:
+        return mbr.get_members_by_segment(segment)
     if nft_type:
         return mbr.get_members_by_nft_type(nft_type)
     return mbr.get_all_members()
@@ -226,6 +232,16 @@ async def api_member_history(email: str, _user: str = Depends(require_admin)):
     return {"member": member, **history}
 
 
+@app.get("/api/members/{email:path}/purchases")
+async def api_member_purchases(email: str, _user: str = Depends(require_admin)):
+    member = mbr.get_member_by_email(email)
+    if not member:
+        raise HTTPException(status_code=404, detail="メンバーが見つかりません")
+    purchases = db.get_purchases_by_email(email)
+    summary = db.get_purchase_summary(email)
+    return {"member": member, "purchases": purchases, "summary": summary}
+
+
 @app.post("/api/members/import")
 async def api_import_members(file: UploadFile = File(...), _user: str = Depends(require_admin)):
     content = (await file.read()).decode("utf-8-sig")
@@ -268,6 +284,7 @@ async def api_preview(body: PreviewRequest, _user: str = Depends(require_admin))
 # ── 一括送信 ────────────────────────────────────────────
 class SendEmailRequest(BaseModel):
     nft_types: list[str] = []
+    segment: Optional[str] = None  # "lucky_only" | "lucky_and_special"
     subject: str = Field(min_length=1)
     body: str = Field(min_length=1)
 
@@ -280,10 +297,16 @@ async def api_send_email(
     _rl=Depends(limit_send),
     _user: str = Depends(require_admin),
 ):
-    if body.nft_types:
+    if body.segment:
+        recipients = mbr.get_members_by_segment(body.segment)
+    elif body.nft_types:
         recipients = []
+        seen_emails = set()
         for nft_type in body.nft_types:
-            recipients.extend(mbr.get_members_by_nft_type(nft_type))
+            for m in mbr.get_members_by_nft_type(nft_type):
+                if m["email"] not in seen_emails:
+                    seen_emails.add(m["email"])
+                    recipients.append(m)
     else:
         recipients = mbr.get_all_members()
 
@@ -535,6 +558,7 @@ async def webhook_email(
         nft_type = member["nft_type"] if member else "不明"
 
         history = db.get_recent_exchange(sender_email)
+        purchase_summary = db.get_purchase_summary(sender_email)
 
         try:
             result = ai.generate_reply(
@@ -544,6 +568,7 @@ async def webhook_email(
                 original_subject=subject,
                 original_body=body_text,
                 history=history,
+                purchases=purchase_summary,
             )
         except Exception as e:
             log.exception("AI generation failure")
