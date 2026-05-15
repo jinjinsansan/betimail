@@ -145,20 +145,20 @@ def _format_purchase_summary(purchases: dict) -> str:
         cnt = row.get("purchase_count") or 0
         first = row.get("first_purchase") or "?"
         returns = row.get("total_returns_usdt") or 0
-        jpy = row.get("total_jpy") or 0
+        usdt = row.get("total_jpy") or 0  # 注: amount_jpy 列は実際にはUSDT額
         bits = [f"{cnt}回購入"]
         if units:
             bits.append(f"計{units}口")
-        if jpy:
-            bits.append(f"投資¥{jpy:,}")
+        if usdt:
+            bits.append(f"投資 ${usdt:,} USDT")
         if returns:
             bits.append(f"還元累計{returns:.2f} USDT")
         bits.append(f"初購入{first}")
         parts.append(f"- {nft}: " + " / ".join(bits))
-    total_jpy = purchases.get("total_jpy") or 0
+    total_usdt = purchases.get("total_jpy") or 0
     total_returns = purchases.get("total_returns_usdt") or 0
-    if total_jpy or total_returns:
-        parts.append(f"\n累計: 投資¥{total_jpy:,} / 還元 {total_returns:.2f} USDT")
+    if total_usdt or total_returns:
+        parts.append(f"\n累計: 投資 ${total_usdt:,} USDT / 還元 {total_returns:.2f} USDT")
     return "\n".join(parts)
 
 

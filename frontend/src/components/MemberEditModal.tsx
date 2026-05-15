@@ -188,7 +188,7 @@ function PurchasesSection({ data }: { data: MemberPurchases }) {
     <>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 16 }}>
         <Stat label="購入件数" value={summary.total_count} />
-        <Stat label="投資合計" value={`¥${summary.total_jpy.toLocaleString()}`} />
+        <Stat label="投資合計" value={`$${summary.total_jpy.toLocaleString()} USDT`} />
         <Stat label="還元累計" value={`${summary.total_returns_usdt.toFixed(2)} USDT`} />
       </div>
 
@@ -212,7 +212,7 @@ function PurchasesSection({ data }: { data: MemberPurchases }) {
               <span style={{ color: "var(--text-3)", fontSize: 12 }}>{r.total_units} 口</span>
             )}
             {r.total_jpy != null && r.total_jpy > 0 && (
-              <span style={{ color: "var(--text-3)", fontSize: 12 }}>¥{r.total_jpy.toLocaleString()}</span>
+              <span style={{ color: "var(--text-3)", fontSize: 12 }}>${r.total_jpy.toLocaleString()} USDT</span>
             )}
             {r.total_returns_usdt != null && r.total_returns_usdt > 0 && (
               <span style={{ marginLeft: "auto", color: "var(--success)", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
@@ -240,7 +240,7 @@ function PurchasesSection({ data }: { data: MemberPurchases }) {
                 <span className={`badge ${nftBadgeClass(p.nft_type)}`}>{nftLabel(p.nft_type)}</span>
                 <span style={{ color: "var(--text-3)", fontFamily: "var(--font-mono)" }}>{p.purchased_at || "-"}</span>
                 {p.amount_jpy != null && p.amount_jpy > 0 && (
-                  <span style={{ color: "var(--text-2)" }}>¥{p.amount_jpy.toLocaleString()}</span>
+                  <span style={{ color: "var(--text-2)" }}>${p.amount_jpy.toLocaleString()} USDT</span>
                 )}
                 {p.units != null && p.units > 0 && (
                   <span style={{ color: "var(--text-3)" }}>· {p.units} 口</span>

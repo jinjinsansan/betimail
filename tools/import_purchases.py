@@ -28,7 +28,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
-JPY_RE = re.compile(r"[¥,]")
+JPY_RE = re.compile(r"[¥$,\s]")  # CSVの「¥1,000」表記を剥がす。実態は USDT 額
 
 
 def parse_jpy(s: str) -> Optional[int]:
@@ -218,7 +218,7 @@ def regenerate_members_csv(records: list[dict], output_path: str) -> dict:
         # NFT種別はカンマ区切りで列挙
         nft_list = ", ".join(sorted(m["nft_types"]))
         # notes に投資サマリーを構造化テキストで残す
-        notes = f"投資合計: ¥{m['total_jpy']:,} / 口数: {m['total_units']} / 還元累計: {m['total_returns']:.2f} USDT"
+        notes = f"投資合計: ${m['total_jpy']:,} USDT / 口数: {m['total_units']} / 還元累計: {m['total_returns']:.2f} USDT"
         rows.append({
             "name": m["name"] or "(名前未設定)",
             "email": email,
@@ -278,7 +278,7 @@ def main():
         print(f"  ◆ {nft}")
         print(f"    - 行数: {stats['rows']}")
         print(f"    - ユニーク保有者: {stats['unique_emails']}")
-        print(f"    - 投資合計: ¥{stats['total_jpy']:,}")
+        print(f"    - 投資合計: ${stats['total_jpy']:,} USDT")
         print(f"    - 口数合計: {stats['total_units']}")
         print(f"    - 還元累計: {stats['total_returns_usdt']} USDT")
         print()
