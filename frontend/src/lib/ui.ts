@@ -71,3 +71,29 @@ export function debounce<T extends (...args: any[]) => void>(fn: T, ms: number):
 export function memberInitial(m: Member): string {
   return (m.name?.[0] || m.email?.[0] || "?").toUpperCase();
 }
+
+const GMAIL_DOMAINS = new Set(["gmail.com", "googlemail.com"]);
+
+/**
+ * Gmail/Googlemail のドット違い・+タグ違いを 1 つの受信箱として
+ * 扱うための正規化。バックエンド `members.canonical_inbox` と一致。
+ */
+export function canonicalInbox(email: string): string {
+  if (!email) return "";
+  const [local0, domain0] = email.trim().toLowerCase().split("@");
+  if (!domain0) return email.trim().toLowerCase();
+  const local = local0.split("+")[0];
+  if (GMAIL_DOMAINS.has(domain0)) {
+    return `${local.replace(/\./g, "")}@gmail.com`;
+  }
+  return `${local}@${domain0}`;
+}
+
+export function uniqueInboxCount(emails: Iterable<string>): number {
+  const seen = new Set<string>();
+  for (const e of emails) {
+    const k = canonicalInbox(e);
+    if (k) seen.add(k);
+  }
+  return seen.size;
+}

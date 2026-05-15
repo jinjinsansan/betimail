@@ -556,6 +556,17 @@ async def api_send_email(
     if not recipients:
         raise HTTPException(status_code=400, detail="送信先メンバーが見つかりません")
 
+    # Gmail エイリアス（+タグ・ドット違い）が DB に複数登録されていても、
+    # 同じ物理受信箱には 1 通しか届かないようにする。
+    before_count = len(recipients)
+    recipients = mbr.dedupe_by_inbox(recipients)
+    after_count = len(recipients)
+    if before_count != after_count:
+        log.info(
+            "Bulk send dedup by inbox: %d -> %d (skipped %d alias duplicates)",
+            before_count, after_count, before_count - after_count,
+        )
+
     job_id = db.create_bulk_job(
         subject=body.subject,
         body=body.body,

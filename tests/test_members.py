@@ -59,3 +59,35 @@ def test_import_csv():
     r = mbr.import_csv(csv_data)
     assert r["added"] == 1
     assert len(r["skipped"]) == 2
+
+
+def test_canonical_inbox_gmail_dots_and_plus():
+    assert mbr.canonical_inbox("User@Gmail.com") == "user@gmail.com"
+    assert mbr.canonical_inbox("u.s.e.r@gmail.com") == "user@gmail.com"
+    assert mbr.canonical_inbox("user+tag@gmail.com") == "user@gmail.com"
+    assert mbr.canonical_inbox("u.s.e.r+abc@gmail.com") == "user@gmail.com"
+    assert mbr.canonical_inbox("user@googlemail.com") == "user@gmail.com"
+
+
+def test_canonical_inbox_non_gmail_keeps_dots():
+    # Yahoo/Outlook etc. はドットが意味を持つので残す
+    assert mbr.canonical_inbox("foo.bar@example.com") == "foo.bar@example.com"
+    # + タグは大半のメジャープロバイダで除外可能と扱う
+    assert mbr.canonical_inbox("foo+tag@example.com") == "foo@example.com"
+
+
+def test_dedupe_by_inbox_keeps_richest_record():
+    members_list = [
+        {"name": "A1", "email": "kaori+1@gmail.com",   "nft_type": "会員権NFT"},
+        {"name": "A2", "email": "k.aori+2@gmail.com",  "nft_type": "会員権NFT, ラッキーマスタードNFT"},
+        {"name": "A3", "email": "kaori@gmail.com",     "nft_type": "会員権NFT"},
+        {"name": "B",  "email": "other@example.com",   "nft_type": "会員権NFT"},
+    ]
+    out = mbr.dedupe_by_inbox(members_list)
+    inboxes = [mbr.canonical_inbox(m["email"]) for m in out]
+    # kaori 系は 1 つにまとまる（最も NFT 種別が多い A2 が残る）
+    assert len(out) == 2
+    assert "other@example.com" in inboxes
+    assert "kaori@gmail.com" in inboxes
+    kaori = [m for m in out if mbr.canonical_inbox(m["email"]) == "kaori@gmail.com"][0]
+    assert kaori["name"] == "A2"

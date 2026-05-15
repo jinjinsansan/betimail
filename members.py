@@ -40,6 +40,53 @@ def _normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+_GMAIL_DOMAINS = {"gmail.com", "googlemail.com"}
+
+
+def canonical_inbox(email: str) -> str:
+    """同一の物理受信箱に届く別表記アドレスを 1 つにまとめた正規形を返す。
+
+    - 大文字/小文字を無視
+    - Gmail/Googlemail は `+tag` を除去し、ローカル部のドットを除去
+    - その他プロバイダは `+tag` のみ除去（大半の主要プロバイダで実態に合う）
+
+    送信時の重複排除キーとして使う。DB の生 email は変更しない。
+    """
+    if not email:
+        return ""
+    local, _, domain = email.strip().lower().partition("@")
+    if not domain:
+        return email.strip().lower()
+    local = local.split("+", 1)[0]
+    if domain in _GMAIL_DOMAINS:
+        local = local.replace(".", "")
+        domain = "gmail.com"
+    return f"{local}@{domain}"
+
+
+def dedupe_by_inbox(members: list[dict]) -> list[dict]:
+    """正規化された受信箱単位で重複を除外。
+
+    各受信箱について、NFT種別が最も多い（=最も情報量の多い）レコードを採用。
+    同点の場合は最後に追加された（=新しい）方を優先。
+    """
+    by_inbox: dict[str, dict] = {}
+    for m in members:
+        key = canonical_inbox(m.get("email", ""))
+        if not key:
+            continue
+        existing = by_inbox.get(key)
+        if existing is None:
+            by_inbox[key] = m
+            continue
+        # NFT種別が多い方を優先
+        cur_n = len((existing.get("nft_type") or "").split(","))
+        new_n = len((m.get("nft_type") or "").split(","))
+        if new_n >= cur_n:
+            by_inbox[key] = m
+    return list(by_inbox.values())
+
+
 def _validate(name: str, email: str, nft_type: str, joined_date: str) -> str:
     if not name.strip():
         raise ValueError("名前は必須です")

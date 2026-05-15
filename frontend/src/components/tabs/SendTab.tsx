@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import type { Member, Template, BulkJob } from "@/lib/types";
-import { NFT_TYPES, nftLabel, debounce, nftBadgeClass } from "@/lib/ui";
+import { NFT_TYPES, nftLabel, debounce, nftBadgeClass, uniqueInboxCount } from "@/lib/ui";
 import { I } from "@/lib/icons";
 import { Modal } from "../common";
 
@@ -79,6 +79,10 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
       return selectedNfts.some((s) => t.includes(s));
     });
   }, [members, segment, selectedNfts]);
+
+  // Gmail エイリアスを正規化して実際に届く受信箱数を算出
+  const uniqueInboxes = useMemo(() => uniqueInboxCount(target.map((m) => m.email)), [target]);
+  const dedupedAway = target.length - uniqueInboxes;
 
   function toggleNft(t: string) {
     setSegment(null); // セグメント選択を解除（NFT種別が優先）
@@ -280,7 +284,17 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
 
         <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10, background: "var(--bg-soft)", flexWrap: "wrap" }}>
           <span style={{ fontSize: 13, color: "var(--text-2)" }}>
-            <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{target.length} 名</b> に送信
+            <b style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{target.length} 名</b>
+            {dedupedAway > 0 && (
+              <>
+                {" → "}
+                <b style={{ color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>{uniqueInboxes} 通</b>
+                <span style={{ color: "var(--text-3)", fontSize: 12, marginLeft: 6 }}>
+                  （{dedupedAway} 件のエイリアス重複を統合）
+                </span>
+              </>
+            )}
+            {" に送信"}
           </span>
           <button className="btn ghost sm" onClick={saveAsTemplate}><I.Save /> テンプレート保存</button>
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -320,7 +334,15 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
         }
       >
         <div style={{ fontSize: 14, lineHeight: 1.7 }}>
-          <p>以下の内容で <b>{target.length} 名</b> に送信します。よろしいですか？</p>
+          <p>
+            以下の内容で <b>{target.length} 名</b> 中、
+            実際に届く <b style={{ color: "var(--accent)" }}>{uniqueInboxes} 通</b> に送信します。
+            {dedupedAway > 0 && (
+              <span style={{ color: "var(--text-3)", fontSize: 13 }}>
+                <br />（同一受信箱への {dedupedAway} 件のエイリアス重複は統合されます）
+              </span>
+            )}
+          </p>
           <div style={{ marginTop: 14, padding: 14, background: "var(--bg-soft)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
             <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>件名</div>
             <b>{subject || "(未入力)"}</b>
