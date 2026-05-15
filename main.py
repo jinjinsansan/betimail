@@ -211,6 +211,13 @@ async def api_public_check(
     if not PUBLIC_CHECK_REQUIRE_OTP:
         return _build_public_check_result(email)
 
+    # 非メンバーには OTP を送らない（無関係な人へのメール送信を防止）。
+    # 「OTP 必須」と「即 found:false」を返し分けることで列挙の手掛かりは
+    # 与えるが、メアドそのものを所持していない第三者には実害がない上、
+    # rate-limit で大量ピングは抑止できる。
+    if not mbr.get_member_by_email(email):
+        return {"found": False}
+
     if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
         raise HTTPException(status_code=503, detail="確認機能は一時的に利用できません")
 

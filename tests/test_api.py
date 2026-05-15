@@ -188,6 +188,29 @@ def test_public_check_otp_flow(monkeypatch):
     assert ok.json() == {"found": True}
 
 
+def test_public_check_otp_skipped_for_non_member(monkeypatch):
+    """非メンバーには OTP を送らず、即 found:false を返す。"""
+    monkeypatch.setenv("PUBLIC_CHECK_REQUIRE_OTP", "true")
+    monkeypatch.setenv("RESEND_API_KEY", "test-key")
+    monkeypatch.setenv("RESEND_FROM_EMAIL", "support@example.com")
+    client = _fresh_client(monkeypatch)
+
+    import main
+    sent_calls = []
+
+    def fake_send_email(to_email, to_name, subject, body, headers=None, reply_to=None):
+        sent_calls.append(to_email)
+        return "mail-id"
+
+    monkeypatch.setattr(main.mail, "send_email", fake_send_email)
+
+    r = client.post("/api/public/check", json={"email": "stranger@example.com"})
+    assert r.status_code == 200
+    assert r.json() == {"found": False}
+    # OTP メールは送られていないこと
+    assert sent_calls == []
+
+
 def test_send_requires_confirm_all(monkeypatch):
     client = _fresh_client(monkeypatch)
     headers = _auth_headers(client)
