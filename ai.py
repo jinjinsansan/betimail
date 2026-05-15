@@ -170,6 +170,7 @@ def generate_reply(
     original_body: str,
     history: Optional[list[dict]] = None,
     purchases: Optional[dict] = None,
+    is_member: bool = True,
 ) -> dict:
     """AI返信生成。{reply, confidence, needs_human, reason} を返す。"""
     if client is None:
@@ -186,23 +187,48 @@ def generate_reply(
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴（DB記録）:\n{_format_purchase_summary(purchases)}\n"
 
-    current_prompt = f"""今回返信すべきメンバー様からのメールです。
+    if is_member:
+        guidance = """このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
+submit_reply ツールで提出してください。
+
+★ 購入履歴が記載されている場合、メンバー様の事情・損失感を理解した上で
+お返事してください。ただし、具体的な金額・時期・配当の数字は答えず、
+個別の質問は仁氏（運営）に取り次ぐ姿勢を守ってください。"""
+    else:
+        guidance = """⚠️ 重要: 送信者のメールアドレスは beti コミュニティの登録メンバーリストに
+**見つかりません**。これは以下のいずれかの可能性があります:
+  (a) 別のメールアドレスで登録した方が、別アドレスで問い合わせている
+  (b) 登録漏れ
+  (c) コミュニティ外の方（スパム・誤送信・新規問合せ等）
+
+このため、必ず以下のスタンスで返信下書きを作成してください:
+
+1. **メンバー前提の文言は使わない**（「いつもご支援ありがとうございます」「ご購入の○○」など禁止）
+2. **お問い合わせのお礼**から入る（中立的に）
+3. **「現在の登録状況を確認できなかった」**ことを丁寧に伝える
+4. **セルフチェックページの案内**:
+   https://admin.betimail.uk/check
+   で別アドレスでお試しいただくよう促す
+5. **別アドレスで登録の可能性**にも触れる
+6. 必要なら **改めてご返信を**と案内
+7. 署名: beti 運営サポート
+
+submit_reply の confidence は 0.5 以下、needs_human は **必ず true** にしてください。
+仁氏が状況を確認した上で承認/編集する想定です。"""
+
+    current_prompt = f"""今回返信すべきメールです。
 
 送信者名: {sender_name or "不明"}
 送信者メールアドレス: {sender_email}
-保有 NFT 種別: {nft_type or "不明"}{purchase_block}
+保有 NFT 種別: {nft_type or "不明"}
+登録状況: {'beti 登録メンバー' if is_member else '⚠️ 登録未確認（DBに該当なし）'}{purchase_block}
 
 件名: {original_subject or "(件名なし)"}
 
 本文:
 {original_body}
 
-このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
-submit_reply ツールで提出してください。
-
-★ 購入履歴が記載されている場合、メンバー様の事情・損失感を理解した上で
-お返事してください。ただし、具体的な金額・時期・配当の数字は答えず、
-個別の質問は仁氏（運営）に取り次ぐ姿勢を守ってください。"""
+{guidance}"""
 
     messages = history_messages + [{"role": "user", "content": current_prompt}]
 
@@ -255,6 +281,14 @@ submit_reply ツールで提出してください。
         result["needs_human"] = True
         if not result.get("reason"):
             result["reason"] = f"AI自信度が低い ({conf:.0%})"
+
+    # 非メンバーは絶対に自動送信させない
+    if not is_member:
+        result["needs_human"] = True
+        if not result.get("reason"):
+            result["reason"] = "DB未登録の方からの問合せ（要本人確認）"
+        else:
+            result["reason"] = f"[DB未登録] {result['reason']}"
 
     result.setdefault("reply", "")
     result.setdefault("confidence", conf)

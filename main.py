@@ -643,10 +643,11 @@ async def webhook_email(
 
     def process():
         member = mbr.get_member_by_email(sender_email)
+        is_member = member is not None
         nft_type = member["nft_type"] if member else "不明"
 
         history = db.get_recent_exchange(sender_email)
-        purchase_summary = db.get_purchase_summary(sender_email)
+        purchase_summary = db.get_purchase_summary(sender_email) if is_member else None
 
         try:
             result = ai.generate_reply(
@@ -657,6 +658,7 @@ async def webhook_email(
                 original_body=body_text,
                 history=history,
                 purchases=purchase_summary,
+                is_member=is_member,
             )
         except Exception as e:
             log.exception("AI generation failure")
