@@ -39,7 +39,7 @@ from config import (
 async def lifespan(app: FastAPI):
     db.init_db()
     if not admin_configured():
-        log.warning("ADMIN_PASSWORD が未設定です。管理画面はパブリックアクセス可能になっています。")
+        log.warning("ADMIN_PASSWORD が未設定です。管理APIは 503 で拒否されます。")
     bot_thread = None
     if TELEGRAM_BOT_TOKEN:
         bot_thread = telegram_bot.start_bot_thread()
@@ -99,7 +99,6 @@ class PublicCheckRequest(BaseModel):
 async def api_public_check(
     body: PublicCheckRequest,
     request: Request,
-    _rl=Depends(limit_public_check),
 ):
     """メルマガ配信対象者かどうかをユーザー自身が確認できる公開API。
 
@@ -107,6 +106,9 @@ async def api_public_check(
     既に閉じたコミュニティ内の保有情報のため、emailを知っている人にのみ
     意味のある情報。Telegram/メール送信機能は提供しない。
     """
+    limit_public_check(request, str(body.email))
+    await asyncio.sleep(0.2)
+
     member = mbr.get_member_by_email(body.email)
     if not member:
         return {"found": False}
@@ -142,7 +144,6 @@ class LoginRequest(BaseModel):
 @app.post("/api/auth/login")
 async def api_login(
     body: LoginRequest,
-    request: Request,
     _rl=Depends(limit_login),
 ):
     if not admin_configured():
@@ -638,11 +639,14 @@ async def webhook_email(
     sender_name = data.get("from_name") or data.get("sender_name") or ""
     subject = data.get("subject", "")
     body_text = data.get("text") or data.get("html") or data.get("body") or ""
-    message_id = data.get("message_id") or data.get("id") or ""
+    message_id = data.get("message_id") or ""
     in_reply_to = data.get("in_reply_to") or ""
     email_id = data.get("email_id") or data.get("id") or ""
     if message_id and db.has_received_message_id(message_id):
         log.info("Webhook duplicate skipped by message_id=%s", message_id)
+        return {"status": "duplicate"}
+    if email_id and db.has_received_webhook_email_id(email_id):
+        log.info("Webhook duplicate skipped by webhook_email_id=%s", email_id)
         return {"status": "duplicate"}
 
     # 本文が無い場合（email.received の webhook はメタデータのみ）、APIで取得
@@ -680,6 +684,9 @@ async def webhook_email(
     if message_id and db.has_received_message_id(message_id):
         log.info("Webhook duplicate skipped after hydrate by message_id=%s", message_id)
         return {"status": "duplicate"}
+    if email_id and db.has_received_webhook_email_id(email_id):
+        log.info("Webhook duplicate skipped after hydrate by webhook_email_id=%s", email_id)
+        return {"status": "duplicate"}
 
     def process():
         member = mbr.get_member_by_email(sender_email)
@@ -715,6 +722,7 @@ async def webhook_email(
             ai_draft=result.get("reply", ""),
             ai_confidence=result.get("confidence"),
             message_id=message_id,
+            webhook_email_id=email_id,
             in_reply_to=in_reply_to,
         )
         if not created:

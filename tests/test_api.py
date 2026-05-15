@@ -136,7 +136,8 @@ def test_require_admin_returns_503_when_not_configured(monkeypatch):
     assert r.status_code == 503
 
 
-def test_public_check_hides_pii_by_default(monkeypatch):
+def test_public_check_shows_name_only_by_default(monkeypatch):
+    """C案: 名前は出すが NFT 種別は隠すのがデフォルト挙動。"""
     client = _fresh_client(monkeypatch)
     headers = _auth_headers(client)
     client.post("/api/members", json={
@@ -146,7 +147,8 @@ def test_public_check_hides_pii_by_default(monkeypatch):
     r = client.post("/api/public/check", json={"email": "y@example.com"})
     assert r.status_code == 200
     payload = r.json()
-    assert payload == {"found": True}
+    assert payload == {"found": True, "name": "山田太郎"}
+    assert "nft_types" not in payload
 
 
 def test_send_requires_confirm_all(monkeypatch):

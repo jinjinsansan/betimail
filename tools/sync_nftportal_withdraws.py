@@ -24,6 +24,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 LOG_DIR = Path("/opt/betimail/logs/nftportal_sync")
+LOG_FILE = LOG_DIR / "sync.log"
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_KEEP = 5
+
+
+def _rotate_log_file(path: Path, max_bytes: int = LOG_MAX_BYTES, keep: int = LOG_KEEP) -> None:
+    if not path.exists() or path.stat().st_size < max_bytes:
+        return
+    for i in range(keep - 1, 0, -1):
+        src = path.with_name(f"{path.name}.{i}")
+        dst = path.with_name(f"{path.name}.{i + 1}")
+        if src.exists():
+            src.replace(dst)
+    path.replace(path.with_name(f"{path.name}.1"))
 
 
 def log(msg: str):
@@ -31,7 +45,8 @@ def log(msg: str):
     line = f"[{ts}] {msg}"
     print(line, flush=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    with open(LOG_DIR / "sync.log", "a", encoding="utf-8") as f:
+    _rotate_log_file(LOG_FILE)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
 

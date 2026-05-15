@@ -6,6 +6,7 @@ Bot のイベントループに run_coroutine_threadsafe で投げる。
 import asyncio
 import re
 import threading
+import time
 from typing import Optional
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -25,6 +26,7 @@ log = get_logger(__name__)
 _bot_loop: Optional[asyncio.AbstractEventLoop] = None
 _bot_loop_lock = threading.Lock()
 _application: Optional[Application] = None
+_bot_stop_event = threading.Event()
 
 
 def _escape_md_v2(text: str) -> str:
@@ -374,19 +376,24 @@ def build_application() -> Application:
 
 def _run_bot_in_thread():
     """別スレッドで Bot を起動。専用の event loop をモジュール変数に保存する。"""
-    global _bot_loop
+    global _bot_loop, _application
     asyncio.set_event_loop(asyncio.new_event_loop())
     loop = asyncio.get_event_loop()
     with _bot_loop_lock:
         _bot_loop = loop
-    app = build_application()
-    try:
-        app.run_polling(stop_signals=None)
-    except Exception:
-        log.exception("Telegram bot crashed")
-    finally:
-        with _bot_loop_lock:
-            _bot_loop = None
+    while not _bot_stop_event.is_set():
+        app = build_application()
+        try:
+            app.run_polling(stop_signals=None)
+        except Exception:
+            log.exception("Telegram bot crashed")
+        finally:
+            _application = None
+        if not _bot_stop_event.is_set():
+            log.warning("Telegram bot restarting in 5 seconds")
+            time.sleep(5)
+    with _bot_loop_lock:
+        _bot_loop = None
 
 
 def start_bot_thread() -> Optional[threading.Thread]:
@@ -395,6 +402,7 @@ def start_bot_thread() -> Optional[threading.Thread]:
         return None
     if not TELEGRAM_CHAT_IDS:
         log.warning("TELEGRAM_CHAT_ID not set; bot will receive but cannot send notifications")
+    _bot_stop_event.clear()
     thread = threading.Thread(target=_run_bot_in_thread, name="telegram-bot", daemon=True)
     thread.start()
     log.info("Telegram bot thread started")
@@ -402,6 +410,7 @@ def start_bot_thread() -> Optional[threading.Thread]:
 
 
 async def shutdown_bot() -> None:
+    _bot_stop_event.set()
     if _application is not None:
         try:
             await _application.stop()

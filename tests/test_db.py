@@ -74,3 +74,25 @@ def test_get_recent_exchange_ordering():
     # 時系列順 (古い→新しい)
     bodies = [h["body"] for h in history]
     assert bodies == ["hello 1", "reply 1", "hello 2"]
+
+
+def test_received_email_dedup_with_webhook_email_id():
+    rid1, created1 = db.record_received_email_if_new(
+        sender_email="x@example.com",
+        sender_name="X",
+        subject="s",
+        body="b",
+        message_id="",
+        webhook_email_id="email_123",
+    )
+    rid2, created2 = db.record_received_email_if_new(
+        sender_email="x@example.com",
+        sender_name="X",
+        subject="s",
+        body="b",
+        message_id="",
+        webhook_email_id="email_123",
+    )
+    assert created1 is True
+    assert created2 is False
+    assert rid1 == rid2

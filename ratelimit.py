@@ -42,9 +42,18 @@ def limit_send(request: Request) -> None:
     rate_limit("send", max_calls=10, window_seconds=60.0, identifier=_client_ip(request))
 
 
-def limit_public_check(request: Request) -> None:
-    """公開エンドポイント（メルマガ配信チェック）の濫用防止: 20回/分/IP。"""
-    rate_limit("public_check", max_calls=10, window_seconds=60.0, identifier=_client_ip(request))
+def limit_public_check(request: Request, email: str = "") -> None:
+    """公開エンドポイント（メルマガ配信チェック）の濫用防止。"""
+    ip = _client_ip(request)
+    rate_limit("public_check_ip", max_calls=10, window_seconds=60.0, identifier=ip)
+    rate_limit("public_check_ip_hour", max_calls=120, window_seconds=3600.0, identifier=ip)
+    if email:
+        rate_limit(
+            "public_check_email",
+            max_calls=5,
+            window_seconds=300.0,
+            identifier=email.strip().lower(),
+        )
 
 
 def limit_login(request: Request) -> None:

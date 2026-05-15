@@ -25,6 +25,7 @@ AI_HISTORY_DEPTH = int(os.getenv("AI_HISTORY_DEPTH", "5"))
 ALWAYS_HUMAN_APPROVAL = os.getenv("ALWAYS_HUMAN_APPROVAL", "true").lower() == "true"
 PUBLIC_CHECK_EXPOSE_DETAILS = os.getenv("PUBLIC_CHECK_EXPOSE_DETAILS", "false").lower() == "true"
 # /api/public/check の応答にメンバー名を含めるか（デフォルト true: 本人確認のため）
+# 列挙対策はレート制限(ratelimit.limit_public_check)で担保している。
 PUBLIC_CHECK_EXPOSE_NAME = os.getenv("PUBLIC_CHECK_EXPOSE_NAME", "true").lower() == "true"
 # /api/public/check の応答に保有NFT種別を含めるか（デフォルト false: 投資規模漏洩防止）
 PUBLIC_CHECK_EXPOSE_NFT_TYPES = os.getenv("PUBLIC_CHECK_EXPOSE_NFT_TYPES", "false").lower() == "true"

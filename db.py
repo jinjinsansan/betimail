@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS received_emails (
     ai_draft TEXT,
     ai_confidence REAL,
     message_id TEXT,
+    webhook_email_id TEXT,
     in_reply_to TEXT
 );
 
@@ -152,6 +153,7 @@ def init_db() -> None:
         _ensure_column(conn, "sent_emails", "status", "status TEXT DEFAULT 'sent'")
         _ensure_column(conn, "sent_emails", "error", "error TEXT")
         _ensure_column(conn, "received_emails", "message_id", "message_id TEXT")
+        _ensure_column(conn, "received_emails", "webhook_email_id", "webhook_email_id TEXT")
         _ensure_column(conn, "received_emails", "in_reply_to", "in_reply_to TEXT")
         _ensure_column(conn, "pending_approvals", "handled_at", "handled_at TEXT")
         _ensure_column(conn, "pending_approvals", "handled_by", "handled_by TEXT")
@@ -163,6 +165,14 @@ def init_db() -> None:
             )
         except sqlite3.IntegrityError:
             log.warning("Skipping unique index idx_recv_message_id_unique due to existing duplicates")
+        try:
+            conn.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS idx_recv_webhook_email_id_unique
+                   ON received_emails(webhook_email_id)
+                   WHERE webhook_email_id IS NOT NULL AND webhook_email_id <> ''"""
+            )
+        except sqlite3.IntegrityError:
+            log.warning("Skipping unique index idx_recv_webhook_email_id_unique due to existing duplicates")
     log.info("DB initialized at %s", DB_PATH)
 
 
@@ -199,6 +209,7 @@ def record_received_email(
     ai_draft: Optional[str] = None,
     ai_confidence: Optional[float] = None,
     message_id: Optional[str] = None,
+    webhook_email_id: Optional[str] = None,
     in_reply_to: Optional[str] = None,
 ) -> int:
     with get_conn() as conn:
@@ -206,10 +217,10 @@ def record_received_email(
             cur = conn.execute(
                 """INSERT INTO received_emails
                    (sender_email, sender_name, subject, body, received_at,
-                    ai_draft, ai_confidence, message_id, in_reply_to)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ai_draft, ai_confidence, message_id, webhook_email_id, in_reply_to)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (sender_email, sender_name, subject, body, datetime.now().isoformat(),
-                 ai_draft, ai_confidence, message_id, in_reply_to),
+                 ai_draft, ai_confidence, message_id, webhook_email_id, in_reply_to),
             )
             return cur.lastrowid
         except sqlite3.IntegrityError:
@@ -217,6 +228,13 @@ def record_received_email(
                 row = conn.execute(
                     "SELECT id FROM received_emails WHERE message_id = ?",
                     (message_id,),
+                ).fetchone()
+                if row:
+                    return row["id"]
+            if webhook_email_id:
+                row = conn.execute(
+                    "SELECT id FROM received_emails WHERE webhook_email_id = ?",
+                    (webhook_email_id,),
                 ).fetchone()
                 if row:
                     return row["id"]
@@ -231,18 +249,19 @@ def record_received_email_if_new(
     ai_draft: Optional[str] = None,
     ai_confidence: Optional[float] = None,
     message_id: Optional[str] = None,
+    webhook_email_id: Optional[str] = None,
     in_reply_to: Optional[str] = None,
 ) -> tuple[int, bool]:
-    """受信メールを記録。message_id 重複時は既存 id を返し、新規作成フラグを False にする。"""
+    """受信メールを記録。message_id/webhook_email_id 重複時は既存 id を返し、新規作成フラグを False にする。"""
     with get_conn() as conn:
         try:
             cur = conn.execute(
                 """INSERT INTO received_emails
                    (sender_email, sender_name, subject, body, received_at,
-                    ai_draft, ai_confidence, message_id, in_reply_to)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ai_draft, ai_confidence, message_id, webhook_email_id, in_reply_to)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (sender_email, sender_name, subject, body, datetime.now().isoformat(),
-                 ai_draft, ai_confidence, message_id, in_reply_to),
+                 ai_draft, ai_confidence, message_id, webhook_email_id, in_reply_to),
             )
             return cur.lastrowid, True
         except sqlite3.IntegrityError:
@@ -250,6 +269,13 @@ def record_received_email_if_new(
                 row = conn.execute(
                     "SELECT id FROM received_emails WHERE message_id = ?",
                     (message_id,),
+                ).fetchone()
+                if row:
+                    return row["id"], False
+            if webhook_email_id:
+                row = conn.execute(
+                    "SELECT id FROM received_emails WHERE webhook_email_id = ?",
+                    (webhook_email_id,),
                 ).fetchone()
                 if row:
                     return row["id"], False
@@ -263,6 +289,17 @@ def has_received_message_id(message_id: str) -> bool:
         row = conn.execute(
             "SELECT 1 FROM received_emails WHERE message_id = ? LIMIT 1",
             (message_id,),
+        ).fetchone()
+        return row is not None
+
+
+def has_received_webhook_email_id(webhook_email_id: str) -> bool:
+    if not webhook_email_id:
+        return False
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM received_emails WHERE webhook_email_id = ? LIMIT 1",
+            (webhook_email_id,),
         ).fetchone()
         return row is not None
 
