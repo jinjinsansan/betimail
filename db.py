@@ -425,13 +425,31 @@ def update_approval_draft(approval_id: int, new_draft: str) -> None:
 
 
 # ── 履歴 ────────────────────────────────────────────────
-def get_sent_emails(limit: int = 50, offset: int = 0, search: str = "") -> list[dict]:
-    q = "SELECT * FROM sent_emails"
+def get_sent_emails(
+    limit: int = 50,
+    offset: int = 0,
+    search: str = "",
+    bulk: str = "exclude",
+) -> list[dict]:
+    """
+    bulk:
+      "exclude" - bulk_job_id IS NULL のみ（個別メールのみ・既定）
+      "only"    - bulk_job_id IS NOT NULL のみ（メルマガのみ）
+      "include" - フィルタなし
+    """
+    where: list[str] = []
     args: list = []
     if search:
-        q += " WHERE recipient_email LIKE ? OR recipient_name LIKE ? OR subject LIKE ?"
+        where.append("(recipient_email LIKE ? OR recipient_name LIKE ? OR subject LIKE ?)")
         like = f"%{search}%"
-        args = [like, like, like]
+        args += [like, like, like]
+    if bulk == "exclude":
+        where.append("bulk_job_id IS NULL")
+    elif bulk == "only":
+        where.append("bulk_job_id IS NOT NULL")
+    q = "SELECT * FROM sent_emails"
+    if where:
+        q += " WHERE " + " AND ".join(where)
     q += " ORDER BY sent_at DESC LIMIT ? OFFSET ?"
     args += [limit, offset]
     with get_conn() as conn:
@@ -439,13 +457,20 @@ def get_sent_emails(limit: int = 50, offset: int = 0, search: str = "") -> list[
         return [dict(r) for r in rows]
 
 
-def count_sent_emails(search: str = "") -> int:
-    q = "SELECT COUNT(*) as c FROM sent_emails"
+def count_sent_emails(search: str = "", bulk: str = "exclude") -> int:
+    where: list[str] = []
     args: list = []
     if search:
-        q += " WHERE recipient_email LIKE ? OR recipient_name LIKE ? OR subject LIKE ?"
+        where.append("(recipient_email LIKE ? OR recipient_name LIKE ? OR subject LIKE ?)")
         like = f"%{search}%"
-        args = [like, like, like]
+        args += [like, like, like]
+    if bulk == "exclude":
+        where.append("bulk_job_id IS NULL")
+    elif bulk == "only":
+        where.append("bulk_job_id IS NOT NULL")
+    q = "SELECT COUNT(*) as c FROM sent_emails"
+    if where:
+        q += " WHERE " + " AND ".join(where)
     with get_conn() as conn:
         return conn.execute(q, args).fetchone()["c"]
 

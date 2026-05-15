@@ -122,8 +122,10 @@ export const api = {
     }),
 
   emails: {
-    sent: (limit = 25, offset = 0, search = "") =>
-      request<Paged<SentEmail>>(`/api/emails/sent?limit=${limit}&offset=${offset}&search=${encodeURIComponent(search)}`),
+    sent: (limit = 25, offset = 0, search = "", bulk: "exclude" | "only" | "include" = "exclude") =>
+      request<Paged<SentEmail>>(
+        `/api/emails/sent?limit=${limit}&offset=${offset}&search=${encodeURIComponent(search)}&bulk=${bulk}`
+      ),
     received: (limit = 25, offset = 0, search = "") =>
       request<Paged<ReceivedEmail>>(`/api/emails/received?limit=${limit}&offset=${offset}&search=${encodeURIComponent(search)}`),
   },

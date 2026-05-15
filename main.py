@@ -627,11 +627,14 @@ async def api_get_job(job_id: int, _user: str = Depends(require_admin)):
 @app.get("/api/emails/sent")
 async def api_sent_emails(
     limit: int = 50, offset: int = 0, search: str = "",
+    bulk: str = "exclude",  # exclude | only | include
     _user: str = Depends(require_admin),
 ):
+    if bulk not in ("exclude", "only", "include"):
+        bulk = "exclude"
     return {
-        "items": db.get_sent_emails(limit=limit, offset=offset, search=search),
-        "total": db.count_sent_emails(search=search),
+        "items": db.get_sent_emails(limit=limit, offset=offset, search=search, bulk=bulk),
+        "total": db.count_sent_emails(search=search, bulk=bulk),
     }
 
 

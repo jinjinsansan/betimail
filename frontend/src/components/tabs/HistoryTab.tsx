@@ -17,17 +17,18 @@ export default function HistoryTab({ notify }: Props) {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [bulkFilter, setBulkFilter] = useState<"exclude" | "include" | "only">("exclude");
   const [sent, setSent] = useState<Paged<SentEmail>>({ items: [], total: 0 });
   const [received, setReceived] = useState<Paged<ReceivedEmail>>({ items: [], total: 0 });
   const [expanded, setExpanded] = useState<string | null>(null);
 
-  useEffect(() => { setPage(0); setExpanded(null); }, [view, search, statusFilter]);
+  useEffect(() => { setPage(0); setExpanded(null); }, [view, search, statusFilter, bulkFilter]);
 
   useEffect(() => {
     const load = async () => {
       try {
         if (view === "sent") {
-          const r = await api.emails.sent(PAGE, page * PAGE, search);
+          const r = await api.emails.sent(PAGE, page * PAGE, search, bulkFilter);
           setSent(r);
         } else {
           const r = await api.emails.received(PAGE, page * PAGE, search);
@@ -36,7 +37,7 @@ export default function HistoryTab({ notify }: Props) {
       } catch (e: any) { notify(e.message, "error"); }
     };
     load();
-  }, [view, page, search]);
+  }, [view, page, search, bulkFilter]);
 
   const data = view === "sent" ? sent : received;
   const filteredItems = statusFilter === "all"
@@ -81,6 +82,19 @@ export default function HistoryTab({ notify }: Props) {
             <option value="pending">保留中</option>
             <option value="error">失敗</option>
           </select>
+          {view === "sent" && (
+            <select
+              className="select"
+              value={bulkFilter}
+              onChange={(e) => setBulkFilter(e.target.value as "exclude" | "include" | "only")}
+              style={{ width: 180 }}
+              title="メルマガ一斉送信の表示制御"
+            >
+              <option value="exclude">個別のみ（メルマガ非表示）</option>
+              <option value="include">メルマガも含む</option>
+              <option value="only">メルマガのみ</option>
+            </select>
+          )}
           <span className="count">{filteredItems.length} 件</span>
         </div>
 
@@ -116,6 +130,11 @@ export default function HistoryTab({ notify }: Props) {
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <I.ChevronDown size={14} style={{ color: "var(--text-3)", transform: isOpen ? "rotate(180deg)" : "none", transition: "transform .15s", flex: "0 0 14px" }} />
                             <span>{e.subject}</span>
+                            {e.bulk_job_id && (
+                              <span className="badge badge-info" title={`ジョブ #${e.bulk_job_id}`}>
+                                メルマガ #{e.bulk_job_id}
+                              </span>
+                            )}
                           </div>
                           {e.error && <div style={{ fontSize: 11, color: "var(--danger)", marginTop: 2 }}>{e.error}</div>}
                         </td>
