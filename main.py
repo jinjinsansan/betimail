@@ -31,7 +31,7 @@ from webhook import verify_webhook_request
 from config import (
     NFT_TYPES, TELEGRAM_BOT_TOKEN, SEND_WELCOME_EMAIL,
     CORS_ORIGINS, CORS_ORIGIN_REGEX, AI_HISTORY_DEPTH,
-    PUBLIC_CHECK_EXPOSE_DETAILS,
+    PUBLIC_CHECK_EXPOSE_DETAILS, PUBLIC_CHECK_EXPOSE_NAME, PUBLIC_CHECK_EXPOSE_NFT_TYPES,
 )
 
 
@@ -122,9 +122,13 @@ async def api_public_check(
         if t in nft_types and t not in ordered:
             ordered.append(t)
 
-    data = {"found": True}
-    if PUBLIC_CHECK_EXPOSE_DETAILS:
+    data: dict = {"found": True}
+    # PUBLIC_CHECK_EXPOSE_DETAILS=true は両方ON（旧フラグ互換）
+    expose_name = PUBLIC_CHECK_EXPOSE_DETAILS or PUBLIC_CHECK_EXPOSE_NAME
+    expose_nft = PUBLIC_CHECK_EXPOSE_DETAILS or PUBLIC_CHECK_EXPOSE_NFT_TYPES
+    if expose_name:
         data["name"] = member["name"]
+    if expose_nft:
         data["nft_types"] = ordered
     return data
 
