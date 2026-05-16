@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { BulkJob } from "@/lib/types";
-import { statusInfo, fmtDate } from "@/lib/ui";
+import { statusInfo, fmtDate, fmtDateTimeJst } from "@/lib/ui";
 import { I } from "@/lib/icons";
 import { Empty, Modal } from "../common";
 
@@ -26,7 +26,7 @@ export default function JobsTab({ notify }: Props) {
   }, []);
 
   async function cancelJob(j: BulkJob) {
-    const when = j.scheduled_at ? new Date(j.scheduled_at).toLocaleString("ja-JP") : "";
+    const when = j.scheduled_at ? fmtDateTimeJst(j.scheduled_at) : "";
     if (!confirm(`ジョブ #${j.id}（${j.subject}\n予定 ${when}）をキャンセルしますか？`)) return;
     setCancelling(j.id);
     try {
@@ -58,7 +58,7 @@ export default function JobsTab({ notify }: Props) {
             <thead>
               <tr>
                 <th style={{ width: 70 }}>ID</th>
-                <th style={{ width: 150 }}>作成日時</th>
+                <th style={{ width: 150 }}>作成日時 (JST)</th>
                 <th>件名</th>
                 <th style={{ width: 80 }}>対象</th>
                 <th>進捗</th>
@@ -81,7 +81,7 @@ export default function JobsTab({ notify }: Props) {
                       <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(j.created_at)}</span>
                       {j.scheduled_at && (
                         <div style={{ fontSize: 11, color: "var(--warning)", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
-                          <I.Clock size={10} /> 予定: {new Date(j.scheduled_at).toLocaleString("ja-JP")}
+                          <I.Clock size={10} /> 予定: {fmtDateTimeJst(j.scheduled_at)} (JST)
                         </div>
                       )}
                     </td>
@@ -156,9 +156,12 @@ export default function JobsTab({ notify }: Props) {
               </div>
             )}
             <div className="field">
-              <label>状態 / 作成日時</label>
+              <label>状態 / 作成日時 (JST)</label>
               <div style={{ fontSize: 13, color: "var(--text-2)" }}>
                 {statusInfo(showDetail.status).label} · {fmtDate(showDetail.created_at)}
+                {showDetail.scheduled_at && (
+                  <> · 配信予定 <b>{fmtDateTimeJst(showDetail.scheduled_at)}</b></>
+                )}
                 {showDetail.finished_at && <> · 完了 {fmtDate(showDetail.finished_at)}</>}
               </div>
             </div>

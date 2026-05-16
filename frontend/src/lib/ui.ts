@@ -50,16 +50,51 @@ export function statusInfo(s?: string): { label: string; cls: string } {
   }
 }
 
+/**
+ * Backend は UTC で保存しているが、TZ-naive な ISO 文字列も混在するため
+ * 末尾に TZ 表記が無ければ Z を補って UTC として解釈する。
+ */
+function _parseIsoAsUtc(iso: string): Date {
+  const hasTZ = /(Z|[+-]\d{2}:?\d{2})$/.test(iso);
+  return new Date(hasTZ ? iso : iso + "Z");
+}
+
+/**
+ * UTC 保存値を JST (Asia/Tokyo) で "YYYY-MM-DD HH:mm" 表示。
+ * 海外 PC からアクセスしても常に JST 基準で見える。
+ */
 export function fmtDate(iso?: string): string {
   if (!iso) return "-";
-  return iso.replace("T", " ").substring(0, 16);
+  const d = _parseIsoAsUtc(iso);
+  if (isNaN(d.getTime())) return iso.replace("T", " ").substring(0, 16);
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
 }
 
 export function fmtDateShort(iso?: string): string {
   if (!iso) return "-";
-  const d = new Date(iso);
+  const d = _parseIsoAsUtc(iso);
   if (isNaN(d.getTime())) return iso.substring(0, 10);
-  return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    month: "numeric", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value || "";
+  return `${get("month")}/${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
+/** ja-JP ローカライズ。海外 TZ の PC でも常に JST で表示。 */
+export function fmtDateTimeJst(iso?: string): string {
+  if (!iso) return "-";
+  const d = _parseIsoAsUtc(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
 }
 
 export function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {

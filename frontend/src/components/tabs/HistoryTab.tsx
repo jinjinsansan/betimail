@@ -103,7 +103,7 @@ export default function HistoryTab({ notify }: Props) {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th style={{ width: 140 }}>日時</th>
+                  <th style={{ width: 140 }}>日時 (JST)</th>
                   <th>宛先</th>
                   <th>NFT</th>
                   <th>件名</th>
@@ -166,7 +166,7 @@ export default function HistoryTab({ notify }: Props) {
             <table className="tbl">
               <thead>
                 <tr>
-                  <th style={{ width: 140 }}>日時</th>
+                  <th style={{ width: 140 }}>日時 (JST)</th>
                   <th>送信者</th>
                   <th>件名</th>
                   <th style={{ width: 130 }}>AI 信頼度</th>
