@@ -1,7 +1,10 @@
 # Betimail プロジェクト状態ドキュメント
 
-**最終更新**: 2026-05-15 (v1.0.0 リリース)
+**最終更新**: 2026-05-16 (**v1.1.0 リリース**)
 **目的**: 新規 Claude セッションでも即座に状況を把握し、開発・運用を継続できるようにする
+
+> ⚠️ **v1.1.0 以降、本番運用モード**: `TEST_MODE=false` のため実会員にメールが届く状態です。テスト時は **送信先・件名・予約時刻** を必ず確認してから操作してください。
+> セクション 15 の「v1.1.0 重要な変更まとめ」を最優先で読んでください。
 
 ---
 
@@ -10,9 +13,10 @@
 新しい Claude セッションを開始する時は、以下の順で確認すれば再開できます:
 
 1. このファイル `PROJECT_STATE.md` を最初に読む
+   - **特にセクション 15 (v1.1.0 重要な変更まとめ) を最優先**
 2. `ai_knowledge.md` (AI エージェント用知識ベース) を読む
 3. `README.md` (セットアップ手順) を確認
-4. `git log --oneline -20` で最近の変更を確認
+4. `git log --oneline v1.1.0..HEAD` で v1.1.0 以降の変更を確認
 
 主要ファイルへのリンク:
 - `ai_knowledge.md` — beti コミュニティの詳細経緯
@@ -712,7 +716,13 @@ betimail/
 1. ローカルでテスト (`pytest` + `next build`)
 2. git commit + push (Vercel 自動デプロイ)
 3. VPS にも反映 (scp + docker compose up -d --build)
-4. このドキュメントも更新 (変更内容を Section 9 に追記)
+4. このドキュメントも更新 (変更内容を Section 9 または最新リリース節に追記)
+
+**特に予約配信の検証時の事故防止**:
+- 配信日時を **30分以上先** に設定（焦らずキャンセルできる余裕）
+- 件名に「【テスト】」を入れて識別
+- 確認後は必ず `送信ジョブ` タブの X ボタンでキャンセル
+- 緊急時は Section 16 の「緊急予約ジョブ全キャンセル」コマンドで一括停止
 
 ---
 
@@ -721,6 +731,298 @@ betimail/
 | Tag | Date | 内容 |
 |---|---|---|
 | **v1.0.0** | 2026-05-15 | 初期リリース。4 種 NFT 保有者 1,066 名、買い取り出金監視、ユーザーセルフチェックページ含む |
+| **v1.1.0** | 2026-05-16 | **本番運用開始**。OTP・予約配信・エイリアス統合・JST 表示統一・ラッキー報酬の二重実行防止 |
+
+---
+
+## 15. v1.1.0 重要な変更まとめ（**新セッションは必ず読む**）
+
+### 15.1 本番モード切替
+
+| キー | v1.0.0 | v1.1.0 | 影響 |
+|---|---|---|---|
+| `TEST_MODE` | true | **false** | 実会員にメールが届く。一斉送信・OTP・AI返信全て本物 |
+| `PUBLIC_CHECK_REQUIRE_OTP` | (未設定) | **true** | `/check` は OTP 必須 |
+| `PUBLIC_CHECK_EXPOSE_NAME` | true | true | OTP 通過後に名前表示（C案維持）|
+| `PUBLIC_CHECK_EXPOSE_NFT_TYPES` | false | **true** | OTP 通過後に NFT 種別も表示 |
+| `PUBLIC_CHECK_OTP_TTL_SECONDS` | (新) | 600 | コード有効期限 10 分 |
+| `PUBLIC_CHECK_OTP_RESEND_SECONDS` | (新) | 60 | 再送インターバル 60 秒 |
+
+`/opt/betimail/.env.bak-*` にバックアップあり。緊急ロールバックは:
+```bash
+ssh betimail-vps "cp /opt/betimail/.env.bak-XXXXXX /opt/betimail/.env && docker compose restart betimail"
+```
+
+### 15.2 公開チェックページ `/check` の OTP 二段階認証
+
+`POST /api/public/check`:
+- **メンバー**: 6桁コードをメール送信 → `{verification_required:true, masked_email, expires_in}`
+- **非メンバー**: 即 `{found:false}`（OTPメールは送らない＝スパム化防止）
+
+`POST /api/public/check/verify`:
+- 正しいコード入力で `{found:true, name, nft_types}` 返却
+- 8回失敗で当該 OTP は破棄（lockout）
+- レート制限: IP 10/分・120/時、email 5/5分
+
+実装: `main.py` の `_issue_public_check_otp` / `_verify_public_check_otp`。コードは sha256+salt でハッシュ化保存（生コードは保存しない）。
+
+### 15.3 `/check` ページのリデザイン
+
+`frontend/src/app/check/page.tsx` 完全置換。
+
+- 2カラム構成（暖色クリームのヒーロー + 白フォーム）
+- `/check/community.jpg`（4人で肩組みイラスト）
+- `support@betimail.uk` クリックでクリップボードコピー + Toast 通知
+- iOS auto-zoom 防止 (input font-size: 16px)
+- スマホ 920px 以下で縦並びレスポンシブ
+- OTP UI（コード入力欄、再送ボタン、masked email 表示）
+
+### 15.4 メルマガ予約配信機能 ⭐
+
+#### 設計
+
+| 観点 | 仕様 |
+|---|---|
+| **入力** | SendTab の `配信日時` フィールド（datetime-local、空 = 即時送信）|
+| **保存** | DB は UTC、UI は JST 表示 |
+| **最短/最長** | 1分以上先 / 30日以内 |
+| **キャンセル** | `scheduled` 状態のみ可（`running` 以降は不可）|
+| **重複防止** | SQLite atomic UPDATE で先勝ち（cron 並列でも安全）|
+| **対象スナップショット** | 予約時に `bulk_job_targets` テーブルに宛先保存。実行時はそれを使うので、メンバー増減の影響を受けない |
+| **失敗時の status** | `error` (旧: `done` で誤った成功通知が出ていたバグを修正)|
+
+#### 関連ファイル
+
+| ファイル | 変更内容 |
+|---|---|
+| `db.py` | `bulk_send_jobs` に `scheduled_at`, `segment`, `confirm_all` 追加 / `bulk_job_targets` 新規テーブル / `create_bulk_job(recipients=...)`, `cancel_scheduled_job`, `claim_due_scheduled_jobs`, `fail_bulk_job`, `get_bulk_job_targets` 関数 |
+| `main.py` | `POST /api/send` に `scheduled_at` 受付 + `recipients` をスナップショット保存 / `POST /api/send/jobs/{id}/cancel` 追加 |
+| `tools/run_scheduled_jobs.py` | **新規**: cron が1分毎に呼ぶ。`bulk_job_targets` から宛先取得 → 送信。Telegram 通知付 |
+| `frontend/src/components/tabs/SendTab.tsx` | datetime-local ピッカー追加。送信ボタンが「予約配信を登録」に切替 |
+| `frontend/src/components/tabs/JobsTab.tsx` | `予約済` バッジ + キャンセルボタン |
+
+#### Cron 設定（VPS）
+
+```cron
+# 既存
+0 20 * * *  /usr/bin/docker run --rm --env-file /opt/betimail/.env -v /opt/betimail/logs:/opt/betimail/logs betimail-scheduler:latest python /app/tools/daily_lucky_reward.py --notify-telegram >> /opt/betimail/logs/lucky_reward/cron.log 2>&1
+*/30 * * * * /usr/bin/docker run --rm -e BETIMAIL_DB_PATH=/app/data/betimail.db --env-file /opt/betimail/.env -v /opt/betimail/logs:/opt/betimail/logs -v /opt/betimail/data:/app/data betimail-scheduler:latest python /app/tools/sync_nftportal_withdraws.py --notify-telegram >> /opt/betimail/logs/nftportal_sync/cron.log 2>&1
+# v1.1.0 新規
+* * * * *   /usr/bin/docker exec betimail python /app/tools/run_scheduled_jobs.py >> /opt/betimail/logs/scheduler/cron.log 2>&1
+```
+
+予約ジョブ用 cron は `docker exec` で常駐コンテナの中で実行（軽量、低レイテンシ）。
+
+### 15.5 Gmail エイリアス重複統合
+
+DB に 1066 メンバー登録だが、Gmail は `user+1@`, `user+2@`, `u.s.e.r@` を全て同一受信箱として扱うため **実ユニーク受信箱は 961**（最大は kaori さんで 22 通の重複登録）。
+
+#### 動作
+
+`/api/send` で送信時に `members.dedupe_by_inbox(recipients)` を呼ぶ:
+- Gmail/Googlemail: `+tag` 削除 + ドット削除
+- その他プロバイダ: `+tag` 削除のみ（ドットは意味があるので残す）
+- 重複時は **NFT種別が最も多いレコードを採用**（テンプレ展開時の情報量重視）
+
+UI 表示（SendTab フッター）:
+```
+1066 名 → 961 通（105 件のエイリアス重複を統合）に送信
+```
+
+#### 関連ファイル
+
+- `members.py`: `canonical_inbox()`, `dedupe_by_inbox()` 関数追加
+- `frontend/src/lib/ui.ts`: `canonicalInbox()`, `uniqueInboxCount()` ヘルパー
+- `frontend/src/components/tabs/SendTab.tsx`: 重複統合数表示
+
+DB レコード自体は無変更（購入履歴・ウォレットが個別にひもづくため保全）。
+
+### 15.6 タイムゾーン統一（JST）
+
+#### 背景
+
+旧 `fmtDate` は ISO 文字列を単純スライスで表示していたため、UTC 保存値が JST に変換されず誤解を招いていた（"2026-05-16 00:28" と見えるが実は 09:28 JST）。
+
+#### 修正
+
+`frontend/src/lib/ui.ts`:
+- `fmtDate` / `fmtDateShort`: ISO を `_parseIsoAsUtc()` で UTC 解釈 → `Intl.DateTimeFormat({timeZone:"Asia/Tokyo"})` で JST 表示
+- `fmtDateTimeJst`: フル ja-JP ロケール + JST 固定
+- 日時カラムヘッダーに `(JST)` 表記追加
+
+予約日時の入力欄 (`datetime-local`) は **クライアントローカル時刻** のまま（ブラウザ仕様で変更不可、日本のPCなら JST）。
+
+### 15.7 ダッシュボード/メンバー管理の表示バグ修正
+
+#### 複数 NFT 保有者の表示
+
+旧実装は `nft_type` カラム文字列全体を 1 キーとして lookup していたため、`"スペシャルマスタードNFT, ラッキーマスタードNFT"` のような複数保有者が:
+- メンバー一覧でラベル崩れ
+- ダッシュボード「メンバー内訳」で **スペシャル 0 名表示**（実際は 259 名）
+
+修正:
+- `MembersTab.tsx`: NFT 種別カラムを `split + 各種別ごとにバッジ表示`
+- `DashboardTab.tsx`: `nftCounts` 集計を `split + filter + forEach` に変更
+
+正しい数値:
+| NFT種別 | 保有者数 |
+|---|---:|
+| 会員権NFT | 568 |
+| パチスロホイホイ | 378 |
+| ラッキーマスタード | 394 |
+| スペシャルマスタード | 259 |
+
+合計が 100% 超になるのは正しい（複数保有可能のため）。
+
+#### 送受信履歴のメルマガ非表示デフォルト
+
+961 通のメルマガ送信が `送受信履歴` を埋め尽くす問題に対応:
+
+- `db.get_sent_emails(bulk='exclude'|'only'|'include')` 引数追加
+- `/api/emails/sent?bulk=exclude` がデフォルト挙動 = 個別メール（AI返信・承認返信）のみ
+- HistoryTab に切替プルダウン追加: `個別のみ / メルマガも含む / メルマガのみ`
+- `bulk_job_id` を持つ行には `メルマガ #ID` バッジ表示
+- 行クリックで本文展開（送信本文 + 受信本文 + AI下書き + Resend ID / Message-ID）
+
+### 15.8 ラッキー報酬分配の堅牢化
+
+`tools/daily_lucky_reward.py` 強化:
+
+| 機能 | 効果 |
+|---|---|
+| **fcntl ファイルロック** (`.daily_lucky_reward.lock`) | cron ズレ + 手動実行による2重押下防止 |
+| **state.json 1日1回ガード** | 同一 JST 日付では 2 回目以降スキップ。`--force` で上書き |
+| **success 限定通知** | API レスポンスで `success=true` 確認時のみ ✅。それ以外は ⚠️ + exit 1 |
+| **金額バリデーション** | `LUCKY_DAILY_MIN_AMOUNT` (default 1) / `LUCKY_DAILY_MAX_AMOUNT` (default 5000) |
+
+### 15.9 OTP / Webhook / Telegram bot の堅牢化
+
+Droid 監査で追加:
+
+- **`webhook_email_id` カラム + UNIQUE インデックス**: `message_id` に加え 2 段防御で webhook 重複処理を防止
+- **Telegram Bot 自動再起動ループ**: クラッシュ時 5秒バックオフで復帰
+- **ログローテーション** (`tools/daily_lucky_reward.py`, `tools/sync_nftportal_withdraws.py`): 5MB × 5世代
+- **`tools/backup_db.py`**: SQLite `.backup()` → `integrity_check` → gzip → 古い世代削除
+- **ESLint flat config**: `npm run lint --max-warnings=0` で完全 pass
+- **3層レート制限**: IP 10/分・120/時、email 5/5分
+
+### 15.10 環境変数の v1.1.0 追加分
+
+```ini
+# OTP
+PUBLIC_CHECK_REQUIRE_OTP=true
+PUBLIC_CHECK_OTP_TTL_SECONDS=600
+PUBLIC_CHECK_OTP_RESEND_SECONDS=60
+PUBLIC_CHECK_EXPOSE_NAME=true
+PUBLIC_CHECK_EXPOSE_NFT_TYPES=true
+
+# 本番モード
+TEST_MODE=false                     # ⚠️ 全送信解禁
+TEST_ALLOWED_RECIPIENTS=goldbenchan@gmail.com  # 残す（誤って TEST_MODE=true に戻した時の安全策）
+
+# ラッキー報酬の安全装置（任意、デフォルトあり）
+LUCKY_DAILY_MIN_AMOUNT=1
+LUCKY_DAILY_MAX_AMOUNT=5000
+```
+
+### 15.11 v1.1.0 で追加された API エンドポイント
+
+| メソッド | パス | 用途 |
+|---|---|---|
+| POST | `/api/public/check/verify` | OTP コード検証、verified 後の name/NFT 返却 |
+| POST | `/api/send/jobs/{id}/cancel` | 予約ジョブのキャンセル |
+
+### 15.12 v1.1.0 で追加された DB テーブル/カラム
+
+```sql
+-- 新規テーブル
+CREATE TABLE bulk_job_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    recipient_email TEXT NOT NULL,
+    recipient_name TEXT,
+    nft_type TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES bulk_send_jobs(id) ON DELETE CASCADE
+);
+
+-- bulk_send_jobs に追加カラム
+ALTER TABLE bulk_send_jobs ADD COLUMN scheduled_at TEXT;
+ALTER TABLE bulk_send_jobs ADD COLUMN segment TEXT;
+ALTER TABLE bulk_send_jobs ADD COLUMN confirm_all INTEGER DEFAULT 0;
+
+-- received_emails に追加カラム
+ALTER TABLE received_emails ADD COLUMN webhook_email_id TEXT;
+
+-- 新規 UNIQUE インデックス
+CREATE UNIQUE INDEX idx_bulk_targets_job_email_unique ON bulk_job_targets(job_id, recipient_email);
+CREATE UNIQUE INDEX idx_recv_webhook_email_id_unique ON received_emails(webhook_email_id) WHERE webhook_email_id IS NOT NULL AND webhook_email_id <> '';
+```
+
+`db.init_db()` の `_ensure_column()` で既存DBは自動マイグレートされる。
+
+### 15.13 v1.1.0 でファイル追加
+
+```
+tools/run_scheduled_jobs.py       # 予約配信 cron worker (新規)
+tools/backup_db.py                 # SQLite バックアップツール (新規)
+frontend/eslint.config.mjs         # ESLint flat config (新規)
+frontend/public/check/community.jpg  # /check ページ用イラスト (新規)
+```
+
+### 15.14 テスト統計
+
+| 項目 | v1.0.0 | v1.1.0 |
+|---|---|---|
+| pytest 総数 | 33 | **54** |
+| 追加されたテスト | - | OTP, alias dedup, scheduled job lifecycle, cancel, bulk filter |
+
+### 15.15 v1.1.0 デプロイ時の操作履歴
+
+1. 予約配信 cron 追加: `crontab -e` で `* * * * * docker exec betimail ...` 行追加
+2. Scheduler イメージ再ビルド: `cp tools/daily_lucky_reward.py scheduler/tools/ && cd scheduler && docker build -t betimail-scheduler:latest .`
+3. `.env` 更新: `TEST_MODE=false`, `PUBLIC_CHECK_REQUIRE_OTP=true`, `PUBLIC_CHECK_EXPOSE_NFT_TYPES=true`, OTP TTL/Resend 追加
+4. 各種 backend 再ビルド: `docker compose build betimail && docker compose up -d betimail`
+
+### 15.16 仁氏との重要な合意事項（v1.1.0 までに確認済）
+
+- ✅ 「テスト用ダミーアドレスだけ認める」→ TEST_MODE で実装、その後本番運用開始 (`TEST_MODE=false`)
+- ✅ 「betiは日本円を取り扱いしていない」→ 全 UI/AI で `$ USDT` 表記
+- ✅ 「全件 Telegram 承認を必須にする」→ `ALWAYS_HUMAN_APPROVAL=true`（v1.1.0 でも維持）
+- ✅ 「C案で実装（名前のみ表示）」→ デフォルト維持しつつ、OTP 通過後は NFT も解禁
+- ✅ 「クライアントローカルTZで良い」→ JST 表記は明示するが TZ ロック しない
+- ✅ 「送信時動的重複除外」→ DB 不変、送信時に Gmail 正規化
+
+---
+
+## 16. 次セッションの最初の確認コマンド集
+
+```bash
+# v1.1.0 の状態確認
+git log --oneline v1.0.0..HEAD               # 今後 v1.1.0..HEAD に書き換え
+ssh betimail-vps "docker compose -f /opt/betimail/docker-compose.yml ps"
+ssh betimail-vps "crontab -l"
+ssh betimail-vps "tail -20 /opt/betimail/logs/scheduler/cron.log"
+ssh betimail-vps "tail -20 /opt/betimail/logs/lucky_reward/daily.log"
+ssh betimail-vps "grep -E '^(TEST_MODE|PUBLIC_CHECK)' /opt/betimail/.env"
+
+# 予約ジョブの確認
+ssh betimail-vps "docker exec betimail python -c '
+import sys; sys.path.insert(0, \"/app\")
+import db
+for j in db.list_bulk_jobs(limit=5):
+    print(j[\"id\"], j[\"status\"], j[\"scheduled_at\"], j[\"subject\"][:30])
+'"
+
+# 緊急予約ジョブ全キャンセル（誤投入時）
+ssh betimail-vps "docker exec betimail python -c '
+import sys; sys.path.insert(0, \"/app\")
+import db
+with db.get_conn() as c:
+    cur = c.execute(\"UPDATE bulk_send_jobs SET status=\\\"cancelled\\\" WHERE status=\\\"scheduled\\\"\")
+    print(\"cancelled\", cur.rowcount, \"jobs\")
+'"
+```
 
 ---
 
