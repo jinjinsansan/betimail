@@ -220,3 +220,76 @@ def test_send_requires_confirm_all(monkeypatch):
     }, headers=headers)
     r = client.post("/api/send", json={"nft_types": [], "subject": "s", "body": "b"}, headers=headers)
     assert r.status_code == 400
+
+
+def test_send_scheduled_job_persists_and_does_not_dispatch(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    client = _fresh_client(monkeypatch)
+    headers = _auth_headers(client)
+    client.post("/api/members", json={
+        "name": "A", "email": "a@example.com",
+        "nft_type": "会員権NFT", "joined_date": "2024-01-01",
+    }, headers=headers)
+
+    # send_email を spy にして「予約は呼ばれないこと」を確認
+    import main
+    sent = []
+    monkeypatch.setattr(main.mail, "send_bulk_emails",
+                        lambda *a, **kw: sent.append((a, kw)))
+
+    future_iso = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    r = client.post("/api/send", json={
+        "nft_types": ["会員権NFT"], "subject": "s", "body": "b",
+        "scheduled_at": future_iso,
+    }, headers=headers)
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["status"] == "scheduled"
+    assert sent == []  # まだ送られていない
+
+    # ジョブ取得すると status=scheduled
+    job = client.get(f"/api/send/jobs/{j['job_id']}", headers=headers).json()
+    assert job["status"] == "scheduled"
+    assert job["scheduled_at"] is not None
+
+
+def test_send_scheduled_rejects_past_and_far_future(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    client = _fresh_client(monkeypatch)
+    headers = _auth_headers(client)
+    client.post("/api/members", json={
+        "name": "A", "email": "a@example.com",
+        "nft_type": "会員権NFT", "joined_date": "2024-01-01",
+    }, headers=headers)
+    past = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    far = (datetime.now(timezone.utc) + timedelta(days=40)).isoformat()
+    for bad in (past, far):
+        r = client.post("/api/send", json={
+            "nft_types": ["会員権NFT"], "subject": "s", "body": "b",
+            "scheduled_at": bad,
+        }, headers=headers)
+        assert r.status_code == 400, r.text
+
+
+def test_cancel_scheduled_job_endpoint(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    client = _fresh_client(monkeypatch)
+    headers = _auth_headers(client)
+    client.post("/api/members", json={
+        "name": "A", "email": "a@example.com",
+        "nft_type": "会員権NFT", "joined_date": "2024-01-01",
+    }, headers=headers)
+    import main
+    monkeypatch.setattr(main.mail, "send_bulk_emails", lambda *a, **kw: None)
+
+    future_iso = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    create = client.post("/api/send", json={
+        "nft_types": ["会員権NFT"], "subject": "s", "body": "b",
+        "scheduled_at": future_iso,
+    }, headers=headers)
+    job_id = create.json()["job_id"]
+    r = client.post(f"/api/send/jobs/{job_id}/cancel", headers=headers)
+    assert r.status_code == 200
+    # 再キャンセルは 400
+    r2 = client.post(f"/api/send/jobs/{job_id}/cancel", headers=headers)
+    assert r2.status_code == 400

@@ -33,6 +33,8 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
   const [sending, setSending] = useState(false);
   const [job, setJob] = useState<BulkJob | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  // ローカル時刻 (datetime-local 形式 "YYYY-MM-DDTHH:mm")。空文字 = 即時送信。
+  const [scheduleLocal, setScheduleLocal] = useState("");
 
   // NFT 保有数（カンマ区切り対応）
   const counts = useMemo(() => {
@@ -148,15 +150,34 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
     setShowConfirm(false);
     setSending(true);
     try {
+      // ローカル日時 → UTC ISO8601 へ変換 (空なら即時送信)
+      let scheduledAtUtc: string | null = null;
+      if (scheduleLocal) {
+        const local = new Date(scheduleLocal);
+        if (isNaN(local.getTime())) {
+          notify("予約日時の形式が不正です", "error");
+          setSending(false);
+          return;
+        }
+        scheduledAtUtc = local.toISOString();
+      }
       const r = await api.send.bulk({
         nft_types: selectedNfts,
         segment: segment || null,
         confirm_all: !segment && selectedNfts.length === 0,
         subject, body,
+        scheduled_at: scheduledAtUtc,
       });
-      notify(`送信開始: ${r.count}名 (ジョブID ${r.job_id})`);
-      setJob({ id: r.job_id, total: r.count, sent: 0, failed: 0, status: "running" } as BulkJob);
-      pollJob(r.job_id);
+      if (r.status === "scheduled") {
+        const local = scheduleLocal ? new Date(scheduleLocal).toLocaleString("ja-JP") : "";
+        notify(`予約配信を登録しました (ジョブID ${r.job_id} / ${local})`);
+        setScheduleLocal("");
+        onReload();
+      } else {
+        notify(`送信開始: ${r.count}名 (ジョブID ${r.job_id})`);
+        setJob({ id: r.job_id, total: r.count, sent: 0, failed: 0, status: "running" } as BulkJob);
+        pollJob(r.job_id);
+      }
     } catch (e: any) {
       notify(e.message, "error");
     } finally {
@@ -257,6 +278,42 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
             />
           </div>
 
+          <div className="field">
+            <label>
+              <I.Clock size={12} /> 配信日時
+              <span style={{ marginLeft: 8, fontWeight: 400, color: "var(--text-3)", fontSize: 12 }}>
+                （空欄: いま即時送信 / 入力: 指定時刻に予約配信）
+              </span>
+            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <input
+                type="datetime-local"
+                className="input"
+                value={scheduleLocal}
+                min={(() => {
+                  const d = new Date(Date.now() + 60 * 1000);
+                  const off = d.getTimezoneOffset() * 60000;
+                  return new Date(d.getTime() - off).toISOString().slice(0, 16);
+                })()}
+                onChange={(e) => setScheduleLocal(e.target.value)}
+                style={{ width: 240 }}
+              />
+              {scheduleLocal && (
+                <>
+                  <span style={{ fontSize: 12, color: "var(--text-3)" }}>
+                    予定時刻: <b style={{ color: "var(--text)" }}>{new Date(scheduleLocal).toLocaleString("ja-JP")}</b>
+                  </span>
+                  <button type="button" className="btn ghost sm" onClick={() => setScheduleLocal("")}>
+                    クリア
+                  </button>
+                </>
+              )}
+            </div>
+            <div className="field-hint">
+              1分以上先、30日以内で指定してください。配信後はキャンセル不可。
+            </div>
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <div className="field">
               <label>本文</label>
@@ -300,7 +357,13 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
           <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             <button className="btn ghost" onClick={clearForm}>クリア</button>
             <button className="btn primary" disabled={sending} onClick={send}>
-              {sending ? <><span className="spinner" /> 送信中…</> : <><I.Send /> 送信する</>}
+              {sending ? (
+                <><span className="spinner" /> 送信中…</>
+              ) : scheduleLocal ? (
+                <><I.Clock size={14} /> 予約配信を登録</>
+              ) : (
+                <><I.Send /> 送信する</>
+              )}
             </button>
           </div>
         </div>
@@ -325,24 +388,35 @@ export default function SendTab({ members, templates, onReload, notify }: Props)
       <Modal
         open={showConfirm}
         onClose={() => setShowConfirm(false)}
-        title="送信確認"
+        title={scheduleLocal ? "予約配信の登録確認" : "送信確認"}
         footer={
           <>
             <button className="btn ghost" onClick={() => setShowConfirm(false)}>キャンセル</button>
-            <button className="btn primary" onClick={confirmSend}><I.Send /> 送信する</button>
+            <button className="btn primary" onClick={confirmSend}>
+              {scheduleLocal ? <><I.Clock size={14} /> 予約を登録</> : <><I.Send /> 送信する</>}
+            </button>
           </>
         }
       >
         <div style={{ fontSize: 14, lineHeight: 1.7 }}>
           <p>
             以下の内容で <b>{target.length} 名</b> 中、
-            実際に届く <b style={{ color: "var(--accent)" }}>{uniqueInboxes} 通</b> に送信します。
+            実際に届く <b style={{ color: "var(--accent)" }}>{uniqueInboxes} 通</b>
+            {scheduleLocal ? " に予約配信を登録します。" : " に送信します。"}
             {dedupedAway > 0 && (
               <span style={{ color: "var(--text-3)", fontSize: 13 }}>
                 <br />（同一受信箱への {dedupedAway} 件のエイリアス重複は統合されます）
               </span>
             )}
           </p>
+          {scheduleLocal && (
+            <div style={{ marginTop: 8, padding: 12, background: "var(--warning-soft)", borderRadius: "var(--radius)", border: "1px solid rgba(217,119,6,.25)", display: "flex", alignItems: "center", gap: 8 }}>
+              <I.Clock size={14} />
+              <span style={{ fontSize: 13 }}>
+                配信予定: <b>{new Date(scheduleLocal).toLocaleString("ja-JP")}</b>
+              </span>
+            </div>
+          )}
           <div style={{ marginTop: 14, padding: 14, background: "var(--bg-soft)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
             <div style={{ fontSize: 12, color: "var(--text-3)", marginBottom: 4 }}>件名</div>
             <b>{subject || "(未入力)"}</b>

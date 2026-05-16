@@ -65,9 +65,12 @@ export type BulkJob = {
   total: number;
   sent: number;
   failed: number;
-  status: string;
+  status: string;  // running | scheduled | done | cancelled | error
   created_at: string;
   finished_at?: string;
+  scheduled_at?: string | null;
+  segment?: string | null;
+  confirm_all?: number;
 };
 
 export type Health = {

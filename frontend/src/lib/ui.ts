@@ -40,6 +40,8 @@ export function statusInfo(s?: string): { label: string; cls: string } {
     case "error": return { label: "失敗", cls: "badge-danger" };
     case "failed": return { label: "失敗", cls: "badge-danger" };
     case "rejected": return { label: "却下", cls: "badge-danger" };
+    case "cancelled": return { label: "キャンセル", cls: "badge-neutral" };
+    case "scheduled": return { label: "予約済", cls: "badge-warning" };
     case "pending": return { label: "保留中", cls: "badge-warning" };
     case "waiting": return { label: "承認待ち", cls: "badge-warning" };
     case "running": return { label: "実行中", cls: "badge-info" };

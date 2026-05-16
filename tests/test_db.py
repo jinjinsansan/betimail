@@ -76,6 +76,53 @@ def test_get_recent_exchange_ordering():
     assert bodies == ["hello 1", "reply 1", "hello 2"]
 
 
+def test_scheduled_job_lifecycle():
+    from datetime import datetime, timedelta, timezone
+    future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+
+    # 未来のジョブを作成（scheduled になる）
+    future_id = db.create_bulk_job(
+        subject="future", body="b", nft_types="[]", total=3,
+        scheduled_at=future, segment=None, confirm_all=True,
+    )
+    assert db.get_bulk_job(future_id)["status"] == "scheduled"
+    # 過去のジョブを作成（claim 対象）
+    past_id = db.create_bulk_job(
+        subject="past", body="b", nft_types="[]", total=2,
+        scheduled_at=past, segment=None, confirm_all=True,
+    )
+
+    # claim_due_scheduled_jobs は past のみ取得し running に遷移
+    now_iso = datetime.now(timezone.utc).isoformat()
+    claimed = db.claim_due_scheduled_jobs(now_iso)
+    claimed_ids = [j["id"] for j in claimed]
+    assert past_id in claimed_ids
+    assert future_id not in claimed_ids
+    assert db.get_bulk_job(past_id)["status"] == "running"
+    assert db.get_bulk_job(future_id)["status"] == "scheduled"
+
+    # 重複 claim はされない (再呼び出しで past は出てこない)
+    again = db.claim_due_scheduled_jobs(now_iso)
+    assert past_id not in [j["id"] for j in again]
+
+
+def test_cancel_scheduled_job():
+    from datetime import datetime, timedelta, timezone
+    future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    jid = db.create_bulk_job(
+        subject="s", body="b", nft_types="[]", total=1,
+        scheduled_at=future, segment=None, confirm_all=True,
+    )
+    assert db.cancel_scheduled_job(jid) is True
+    assert db.get_bulk_job(jid)["status"] == "cancelled"
+    # 再キャンセルは失敗
+    assert db.cancel_scheduled_job(jid) is False
+    # 通常 (running) ジョブはキャンセル不可
+    running_id = db.create_bulk_job(subject="r", body="b", nft_types="[]", total=1)
+    assert db.cancel_scheduled_job(running_id) is False
+
+
 def test_received_email_dedup_with_webhook_email_id():
     rid1, created1 = db.record_received_email_if_new(
         sender_email="x@example.com",

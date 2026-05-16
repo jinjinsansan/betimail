@@ -108,12 +108,17 @@ export const api = {
       body: string;
       segment?: string | null;
       confirm_all?: boolean;
+      scheduled_at?: string | null;  // ISO8601 UTC
     }) =>
-      request<{ status: string; job_id: number; count: number }>("/api/send", {
+      request<{ status: string; job_id: number; count: number; scheduled_at?: string }>("/api/send", {
         method: "POST", body: JSON.stringify(params),
       }),
     jobs: () => request<BulkJob[]>("/api/send/jobs"),
     job: (id: number) => request<BulkJob>(`/api/send/jobs/${id}`),
+    cancel: (id: number) =>
+      request<{ status: string; job_id: number }>(`/api/send/jobs/${id}/cancel`, {
+        method: "POST", body: JSON.stringify({}),
+      }),
   },
 
   preview: (body: string, sample?: Partial<Member>) =>

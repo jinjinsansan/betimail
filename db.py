@@ -68,7 +68,10 @@ CREATE TABLE IF NOT EXISTS bulk_send_jobs (
     failed INTEGER DEFAULT 0,
     status TEXT DEFAULT 'running',
     created_at TEXT NOT NULL,
-    finished_at TEXT
+    finished_at TEXT,
+    scheduled_at TEXT,
+    segment TEXT,
+    confirm_all INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS templates (
@@ -157,6 +160,9 @@ def init_db() -> None:
         _ensure_column(conn, "received_emails", "in_reply_to", "in_reply_to TEXT")
         _ensure_column(conn, "pending_approvals", "handled_at", "handled_at TEXT")
         _ensure_column(conn, "pending_approvals", "handled_by", "handled_by TEXT")
+        _ensure_column(conn, "bulk_send_jobs", "scheduled_at", "scheduled_at TEXT")
+        _ensure_column(conn, "bulk_send_jobs", "segment", "segment TEXT")
+        _ensure_column(conn, "bulk_send_jobs", "confirm_all", "confirm_all INTEGER DEFAULT 0")
         try:
             conn.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_recv_message_id_unique
@@ -536,12 +542,31 @@ def get_recent_exchange(sender_email: str, limit: int = 5) -> list[dict]:
 
 
 # ── 一括送信ジョブ ──────────────────────────────────────
-def create_bulk_job(subject: str, body: str, nft_types: str, total: int) -> int:
+def create_bulk_job(
+    subject: str,
+    body: str,
+    nft_types: str,
+    total: int,
+    *,
+    scheduled_at: Optional[str] = None,
+    segment: Optional[str] = None,
+    confirm_all: bool = False,
+) -> int:
+    """通常ジョブ (scheduled_at=None) は 'running'、予約ジョブは 'scheduled' で作成。
+
+    scheduled_at は UTC ISO8601 文字列 (例: "2026-05-16T11:30:00+00:00")。
+    """
+    status = "scheduled" if scheduled_at else "running"
     with get_conn() as conn:
         cur = conn.execute(
-            """INSERT INTO bulk_send_jobs (subject, body, nft_types, total, created_at)
-               VALUES (?, ?, ?, ?, ?)""",
-            (subject, body, nft_types, total, datetime.now().isoformat()),
+            """INSERT INTO bulk_send_jobs
+               (subject, body, nft_types, total, status, created_at, scheduled_at, segment, confirm_all)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                subject, body, nft_types, total, status,
+                datetime.now().isoformat(),
+                scheduled_at, segment, 1 if confirm_all else 0,
+            ),
         )
         return cur.lastrowid
 
@@ -574,6 +599,45 @@ def list_bulk_jobs(limit: int = 20) -> list[dict]:
             "SELECT * FROM bulk_send_jobs ORDER BY created_at DESC LIMIT ?", (limit,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def cancel_scheduled_job(job_id: int) -> bool:
+    """予約ジョブをキャンセル。status='scheduled' の時のみ成功。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE bulk_send_jobs
+               SET status = 'cancelled', finished_at = ?
+               WHERE id = ? AND status = 'scheduled'""",
+            (datetime.now().isoformat(), job_id),
+        )
+        return cur.rowcount > 0
+
+
+def claim_due_scheduled_jobs(now_utc_iso: str) -> list[dict]:
+    """期限到達した予約ジョブを atomic に取得し、status='running' に遷移させる。
+
+    cron が並列実行されても、UPDATE ... WHERE status='scheduled' の row-level
+    write lock で重複処理は起きない (SQLite は write は直列化される)。
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            """SELECT * FROM bulk_send_jobs
+               WHERE status = 'scheduled' AND scheduled_at <= ?
+               ORDER BY scheduled_at ASC""",
+            (now_utc_iso,),
+        )
+        candidates = [dict(r) for r in cur.fetchall()]
+        claimed = []
+        for j in candidates:
+            cur = conn.execute(
+                """UPDATE bulk_send_jobs SET status = 'running'
+                   WHERE id = ? AND status = 'scheduled'""",
+                (j["id"],),
+            )
+            if cur.rowcount > 0:
+                j["status"] = "running"
+                claimed.append(j)
+        return claimed
 
 
 # ── テンプレート ────────────────────────────────────────

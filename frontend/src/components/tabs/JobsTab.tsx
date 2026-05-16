@@ -13,6 +13,7 @@ type Props = {
 export default function JobsTab({ notify }: Props) {
   const [jobs, setJobs] = useState<BulkJob[]>([]);
   const [showDetail, setShowDetail] = useState<BulkJob | null>(null);
+  const [cancelling, setCancelling] = useState<number | null>(null);
 
   async function reload() {
     try { setJobs(await api.send.jobs()); }
@@ -23,6 +24,21 @@ export default function JobsTab({ notify }: Props) {
     const h = setInterval(reload, 5000);
     return () => clearInterval(h);
   }, []);
+
+  async function cancelJob(j: BulkJob) {
+    const when = j.scheduled_at ? new Date(j.scheduled_at).toLocaleString("ja-JP") : "";
+    if (!confirm(`ジョブ #${j.id}（${j.subject}\n予定 ${when}）をキャンセルしますか？`)) return;
+    setCancelling(j.id);
+    try {
+      await api.send.cancel(j.id);
+      notify(`ジョブ #${j.id} をキャンセルしました`);
+      await reload();
+    } catch (e: any) {
+      notify(e.message, "error");
+    } finally {
+      setCancelling(null);
+    }
+  }
 
   return (
     <>
@@ -57,24 +73,49 @@ export default function JobsTab({ notify }: Props) {
                 const done = j.sent + j.failed;
                 const pct = j.total ? Math.round((done / j.total) * 100) : 0;
                 const s = statusInfo(j.status);
+                const isScheduled = j.status === "scheduled";
                 return (
                   <tr key={j.id}>
                     <td><span style={{ fontFamily: "var(--font-mono)", color: "var(--text-3)" }}>#{j.id}</span></td>
-                    <td><span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(j.created_at)}</span></td>
+                    <td>
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-3)" }}>{fmtDate(j.created_at)}</span>
+                      {j.scheduled_at && (
+                        <div style={{ fontSize: 11, color: "var(--warning)", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}>
+                          <I.Clock size={10} /> 予定: {new Date(j.scheduled_at).toLocaleString("ja-JP")}
+                        </div>
+                      )}
+                    </td>
                     <td><b>{j.subject}</b></td>
                     <td style={{ fontVariantNumeric: "tabular-nums" }}>{j.total}</td>
                     <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <span style={{ fontSize: 12, color: "var(--text-2)", fontVariantNumeric: "tabular-nums", minWidth: 60 }}>{done}/{j.total}</span>
-                        <div className="progress" style={{ flex: 1, minWidth: 100 }}><div style={{ width: pct + "%" }} /></div>
-                        <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
-                        {j.failed > 0 && <span className="badge badge-danger">失敗 {j.failed}</span>}
-                      </div>
+                      {isScheduled ? (
+                        <span style={{ fontSize: 12, color: "var(--warning)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <I.Clock size={12} /> 待機中
+                        </span>
+                      ) : (
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <span style={{ fontSize: 12, color: "var(--text-2)", fontVariantNumeric: "tabular-nums", minWidth: 60 }}>{done}/{j.total}</span>
+                          <div className="progress" style={{ flex: 1, minWidth: 100 }}><div style={{ width: pct + "%" }} /></div>
+                          <span style={{ fontSize: 12, color: "var(--text-3)", fontVariantNumeric: "tabular-nums" }}>{pct}%</span>
+                          {j.failed > 0 && <span className="badge badge-danger">失敗 {j.failed}</span>}
+                        </div>
+                      )}
                     </td>
                     <td><span className={`badge ${s.cls} dot`}>{s.label}</span></td>
                     <td>
                       <div className="row-actions">
-                        <button className="btn ghost sm" onClick={() => setShowDetail(j)}><I.Eye /></button>
+                        <button className="btn ghost sm" onClick={() => setShowDetail(j)} title="詳細"><I.Eye /></button>
+                        {isScheduled && (
+                          <button
+                            className="btn ghost sm"
+                            style={{ color: "var(--danger)" }}
+                            disabled={cancelling === j.id}
+                            onClick={() => cancelJob(j)}
+                            title="予約をキャンセル"
+                          >
+                            {cancelling === j.id ? <span className="spinner" /> : <I.X />}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import (
@@ -525,6 +525,9 @@ class SendEmailRequest(BaseModel):
     confirm_all: bool = False
     subject: str = Field(min_length=1)
     body: str = Field(min_length=1)
+    # ISO8601 UTC (例: "2026-05-16T11:30:00+00:00")。
+    # 指定された場合は予約ジョブとして登録のみし、cron worker が時刻到達時に実行する。
+    scheduled_at: Optional[str] = None
 
 
 @app.post("/api/send")
@@ -535,6 +538,24 @@ async def api_send_email(
     _rl=Depends(limit_send),
     _user: str = Depends(require_admin),
 ):
+    # scheduled_at の検証 (UTC ISO8601、未来時刻、5分以上先、30日以内)
+    scheduled_utc_iso: Optional[str] = None
+    if body.scheduled_at:
+        try:
+            sched_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="scheduled_at の形式が不正です")
+        if sched_dt.tzinfo is None:
+            raise HTTPException(status_code=400, detail="scheduled_at はタイムゾーン付きで指定してください")
+        sched_utc = sched_dt.astimezone(timezone.utc)
+        now_utc = datetime.now(timezone.utc)
+        delta = (sched_utc - now_utc).total_seconds()
+        if delta < 60:
+            raise HTTPException(status_code=400, detail="予約時刻は現在から1分以上先に設定してください")
+        if delta > 60 * 60 * 24 * 30:
+            raise HTTPException(status_code=400, detail="予約時刻は30日以内に設定してください")
+        scheduled_utc_iso = sched_utc.isoformat()
+
     if body.segment:
         recipients = mbr.get_members_by_segment(body.segment)
     elif body.nft_types:
@@ -572,7 +593,19 @@ async def api_send_email(
         body=body.body,
         nft_types=json.dumps(body.nft_types, ensure_ascii=False),
         total=len(recipients),
+        scheduled_at=scheduled_utc_iso,
+        segment=body.segment,
+        confirm_all=body.confirm_all,
     )
+
+    # 予約ジョブは DB 登録のみ。実際の送信は cron worker が時刻到達時に行う。
+    if scheduled_utc_iso:
+        return {
+            "status": "scheduled",
+            "job_id": job_id,
+            "count": len(recipients),
+            "scheduled_at": scheduled_utc_iso,
+        }
 
     def _on_result(member: dict, status: str, entry: dict):
         if status == "sent":
@@ -608,6 +641,19 @@ async def api_send_email(
 
     bg.add_task(do_send)
     return {"status": "started", "job_id": job_id, "count": len(recipients)}
+
+
+@app.post("/api/send/jobs/{job_id}/cancel")
+async def api_cancel_scheduled_job(
+    job_id: int,
+    _user: str = Depends(require_admin),
+):
+    if not db.cancel_scheduled_job(job_id):
+        raise HTTPException(
+            status_code=400,
+            detail="このジョブはキャンセルできません（実行中・完了済・既にキャンセル済の可能性）",
+        )
+    return {"status": "cancelled", "job_id": job_id}
 
 
 @app.get("/api/send/jobs")
