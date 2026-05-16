@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import traceback
+from contextlib import contextmanager
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -31,8 +32,15 @@ from playwright.sync_api import sync_playwright
 LOG_DIR = Path("/opt/betimail/logs/lucky_reward")
 SCREENSHOT_DIR = Path("/opt/betimail/logs/lucky_reward/shots")
 LOG_FILE = LOG_DIR / "daily.log"
+LOCK_FILE = LOG_DIR / ".daily_lucky_reward.lock"
+STATE_FILE = LOG_DIR / "state.json"
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_KEEP = 5
+JST = dt.timezone(dt.timedelta(hours=9))
+
+
+class AlreadyRunningError(RuntimeError):
+    """同時実行防止ロック取得に失敗した場合。"""
 
 
 def _rotate_log_file(path: Path, max_bytes: int = LOG_MAX_BYTES, keep: int = LOG_KEEP) -> None:
@@ -70,6 +78,56 @@ def telegram_notify(text: str):
         ).read()
     except Exception as e:
         log(f"telegram notify failed: {e}")
+
+
+def _today_jst_str() -> str:
+    return dt.datetime.now(JST).strftime("%Y-%m-%d")
+
+
+def _load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_state(state: dict) -> None:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(STATE_FILE)
+
+
+def _validate_amount(amount: int) -> None:
+    min_amount = int(os.getenv("LUCKY_DAILY_MIN_AMOUNT", "1"))
+    max_amount = int(os.getenv("LUCKY_DAILY_MAX_AMOUNT", "5000"))
+    if amount < min_amount or amount > max_amount:
+        raise ValueError(
+            f"amount={amount} は許容範囲外です "
+            f"({min_amount}〜{max_amount}, env: LUCKY_DAILY_MIN_AMOUNT/MAX_AMOUNT)"
+        )
+
+
+@contextmanager
+def _acquire_run_lock():
+    import fcntl
+
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    fh = open(LOCK_FILE, "w", encoding="utf-8")
+    try:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise AlreadyRunningError("daily_lucky_reward is already running")
+        yield
+    finally:
+        try:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+        except Exception:
+            pass
+        fh.close()
 
 
 def run(amount: int, email: str, password: str, dry_run: bool = False) -> dict:
@@ -173,6 +231,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--amount", type=int, default=None, help="分配額（デフォルト LUCKY_DAILY_AMOUNT または 352）")
     p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--force", action="store_true", help="本日実行済みでも強制実行する")
     p.add_argument("--notify-telegram", action="store_true")
     args = p.parse_args()
 
@@ -186,22 +245,70 @@ def main():
 
     email = os.getenv("LUCKY_ADMIN_EMAIL", "")
     password = os.getenv("LUCKY_ADMIN_PASSWORD", "")
-    amount = args.amount or int(os.getenv("LUCKY_DAILY_AMOUNT", "352"))
+    amount = args.amount if args.amount is not None else int(os.getenv("LUCKY_DAILY_AMOUNT", "352"))
 
     if not email or not password:
         log("❌ LUCKY_ADMIN_EMAIL / LUCKY_ADMIN_PASSWORD が未設定です")
         sys.exit(2)
-
-    log(f"=== daily_lucky_reward start (amount={amount}, dry_run={args.dry_run}) ===")
     try:
-        result = run(amount, email, password, args.dry_run)
-        log(f"=== result: {json.dumps({k: v for k, v in result.items() if k != 'captured'}, ensure_ascii=False)} ===")
+        _validate_amount(amount)
+    except Exception as e:
+        log(f"❌ amount validation error: {e}")
+        sys.exit(2)
+
+    log(f"=== daily_lucky_reward start (amount={amount}, dry_run={args.dry_run}, force={args.force}) ===")
+    try:
+        with _acquire_run_lock():
+            today = _today_jst_str()
+            state = _load_state()
+            if not args.dry_run and not args.force and state.get("last_success_date") == today:
+                msg = (
+                    f"ℹ️ 本日({today})は既に成功実行済みのためスキップ "
+                    f"(tag={state.get('last_success_tag', '-')}, amount={state.get('last_success_amount', '-')})"
+                )
+                log(msg)
+                if args.notify_telegram:
+                    telegram_notify(msg)
+                return
+
+            result = run(amount, email, password, args.dry_run)
+            log(f"=== result: {json.dumps({k: v for k, v in result.items() if k != 'captured'}, ensure_ascii=False)} ===")
+
+            status = result.get("status")
+            if status == "success" and not args.dry_run:
+                state.update({
+                    "last_success_date": today,
+                    "last_success_at": dt.datetime.now(JST).isoformat(),
+                    "last_success_amount": amount,
+                    "last_success_tag": result.get("screenshot_tag"),
+                })
+                _save_state(state)
+
+            if args.notify_telegram:
+                if args.dry_run:
+                    telegram_notify(
+                        f"ℹ️ ラッキー報酬分配 [DRY-RUN] 金額={amount} status={status} "
+                        f"captured={result.get('captured_count', 0)}件 tag={result.get('screenshot_tag', '-')}"
+                    )
+                elif status == "success":
+                    telegram_notify(
+                        f"✅ ラッキー報酬分配 [実行] 金額={amount} status={status} "
+                        f"captured={result.get('captured_count', 0)}件 tag={result.get('screenshot_tag', '-')}"
+                    )
+                else:
+                    telegram_notify(
+                        f"⚠️ ラッキー報酬分配 [要確認] 金額={amount} status={status} "
+                        f"captured={result.get('captured_count', 0)}件 tag={result.get('screenshot_tag', '-')}"
+                    )
+
+            if not args.dry_run and status != "success":
+                log("❌ success 判定できなかったため異常終了します（自動再実行による二重送信防止のため手動確認してください）")
+                sys.exit(1)
+    except AlreadyRunningError:
+        msg = "ℹ️ daily_lucky_reward は既に実行中のためスキップしました"
+        log(msg)
         if args.notify_telegram:
-            label = "DRY-RUN" if args.dry_run else "実行"
-            telegram_notify(
-                f"✅ ラッキー報酬分配 [{label}] 金額={amount} status={result['status']} "
-                f"captured={result.get('captured_count', 0)}件 tag={result['screenshot_tag']}"
-            )
+            telegram_notify(msg)
     except Exception as e:
         log(f"❌ ERROR: {e}\n{traceback.format_exc()}")
         if args.notify_telegram:
