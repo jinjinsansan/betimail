@@ -596,6 +596,7 @@ async def api_send_email(
         scheduled_at=scheduled_utc_iso,
         segment=body.segment,
         confirm_all=body.confirm_all,
+        recipients=recipients,
     )
 
     # 予約ジョブは DB 登録のみ。実際の送信は cron worker が時刻到達時に行う。

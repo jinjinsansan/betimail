@@ -74,6 +74,16 @@ CREATE TABLE IF NOT EXISTS bulk_send_jobs (
     confirm_all INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS bulk_job_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    recipient_email TEXT NOT NULL,
+    recipient_name TEXT,
+    nft_type TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (job_id) REFERENCES bulk_send_jobs(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
@@ -130,6 +140,9 @@ CREATE INDEX IF NOT EXISTS idx_purchases_email ON purchases(email);
 CREATE INDEX IF NOT EXISTS idx_purchases_nft ON purchases(nft_type);
 CREATE INDEX IF NOT EXISTS idx_withdraws_email ON withdraw_requests(email);
 CREATE INDEX IF NOT EXISTS idx_withdraws_external ON withdraw_requests(external_id);
+CREATE INDEX IF NOT EXISTS idx_bulk_targets_job_id ON bulk_job_targets(job_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_targets_job_email_unique
+    ON bulk_job_targets(job_id, recipient_email);
 """
 
 
@@ -551,6 +564,7 @@ def create_bulk_job(
     scheduled_at: Optional[str] = None,
     segment: Optional[str] = None,
     confirm_all: bool = False,
+    recipients: Optional[list[dict]] = None,
 ) -> int:
     """通常ジョブ (scheduled_at=None) は 'running'、予約ジョブは 'scheduled' で作成。
 
@@ -568,7 +582,25 @@ def create_bulk_job(
                 scheduled_at, segment, 1 if confirm_all else 0,
             ),
         )
-        return cur.lastrowid
+        job_id = cur.lastrowid
+        if recipients:
+            conn.executemany(
+                """INSERT OR IGNORE INTO bulk_job_targets
+                   (job_id, recipient_email, recipient_name, nft_type, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                [
+                    (
+                        job_id,
+                        (r.get("email") or "").strip().lower(),
+                        r.get("name", ""),
+                        r.get("nft_type", ""),
+                        datetime.now().isoformat(),
+                    )
+                    for r in recipients
+                    if (r.get("email") or "").strip()
+                ],
+            )
+        return job_id
 
 
 def increment_bulk_job(job_id: int, sent_delta: int = 0, failed_delta: int = 0) -> None:
@@ -613,6 +645,18 @@ def cancel_scheduled_job(job_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def get_bulk_job_targets(job_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT recipient_email as email, recipient_name as name, nft_type
+               FROM bulk_job_targets
+               WHERE job_id = ?
+               ORDER BY id ASC""",
+            (job_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def claim_due_scheduled_jobs(now_utc_iso: str) -> list[dict]:
     """期限到達した予約ジョブを atomic に取得し、status='running' に遷移させる。
 
@@ -638,6 +682,14 @@ def claim_due_scheduled_jobs(now_utc_iso: str) -> list[dict]:
                 j["status"] = "running"
                 claimed.append(j)
         return claimed
+
+
+def fail_bulk_job(job_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE bulk_send_jobs SET status = 'error', finished_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), job_id),
+        )
 
 
 # ── テンプレート ────────────────────────────────────────

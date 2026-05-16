@@ -143,3 +143,76 @@ def test_received_email_dedup_with_webhook_email_id():
     assert created1 is True
     assert created2 is False
     assert rid1 == rid2
+
+
+def test_bulk_job_targets_snapshot():
+    from datetime import datetime, timedelta, timezone
+
+    future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    jid = db.create_bulk_job(
+        subject="s",
+        body="b",
+        nft_types='["会員権NFT"]',
+        total=1,
+        scheduled_at=future,
+        recipients=[{"email": "a@example.com", "name": "A", "nft_type": "会員権NFT"}],
+    )
+    targets = db.get_bulk_job_targets(jid)
+    assert len(targets) == 1
+    assert targets[0]["email"] == "a@example.com"
+    assert targets[0]["name"] == "A"
+
+
+def test_scheduler_resolve_recipients_uses_snapshot():
+    from datetime import datetime, timedelta, timezone
+    import members
+    import tools.run_scheduled_jobs as runner
+
+    members.add_member("A", "a@example.com", "会員権NFT", "2024-01-01")
+    future = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
+    jid = db.create_bulk_job(
+        subject="s",
+        body="b",
+        nft_types='["会員権NFT"]',
+        total=1,
+        scheduled_at=future,
+        recipients=[{"email": "a@example.com", "name": "A", "nft_type": "会員権NFT"}],
+    )
+    # 予約後に対象NFTのメンバーが増えても、予約時スナップショットを優先する
+    members.add_member("B", "b@example.com", "会員権NFT", "2024-01-02")
+
+    resolved = runner._resolve_recipients(db.get_bulk_job(jid))
+    assert [r["email"] for r in resolved] == ["a@example.com"]
+
+
+def test_scheduler_execute_job_marks_error_on_fatal_send(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    import members
+    import mail
+    import tools.run_scheduled_jobs as runner
+
+    members.add_member("A", "a@example.com", "会員権NFT", "2024-01-01")
+    past = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    jid = db.create_bulk_job(
+        subject="fatal",
+        body="b",
+        nft_types='["会員権NFT"]',
+        total=1,
+        scheduled_at=past,
+        recipients=[{"email": "a@example.com", "name": "A", "nft_type": "会員権NFT"}],
+    )
+    job = db.get_bulk_job(jid)
+    notices = []
+    monkeypatch.setattr(runner, "telegram_notify", lambda text: notices.append(text))
+    monkeypatch.setattr(
+        mail,
+        "send_bulk_emails",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    runner._execute_job(job)
+    fresh = db.get_bulk_job(jid)
+    assert fresh["status"] == "error"
+    assert int(fresh["failed"] or 0) >= 1
+    assert any("実行エラー" in n for n in notices)
+    assert not any(n.startswith("✅") for n in notices)

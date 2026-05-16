@@ -64,7 +64,14 @@ def telegram_notify(text: str) -> None:
 
 
 def _resolve_recipients(job: dict) -> list[dict]:
+    import db
     import members as mbr
+
+    job_id = int(job.get("id", 0) or 0)
+    if job_id:
+        targets = db.get_bulk_job_targets(job_id)
+        if targets:
+            return mbr.dedupe_by_inbox(targets)
 
     segment = job.get("segment")
     confirm_all = bool(job.get("confirm_all"))
@@ -101,9 +108,8 @@ def _execute_job(job: dict) -> None:
 
     recipients = _resolve_recipients(job)
     if not recipients:
-        log(f"[#{job_id}] no recipients - marking failed")
-        db.increment_bulk_job(job_id, failed_delta=0)
-        db.finish_bulk_job(job_id)
+        log(f"[#{job_id}] no recipients - marking error")
+        db.fail_bulk_job(job_id)
         telegram_notify(f"⚠️ 予約配信 #{job_id} 失敗: 送信先がありません")
         return
 
@@ -135,24 +141,43 @@ def _execute_job(job: dict) -> None:
 
     try:
         mail.send_bulk_emails(recipients, job["subject"], job["body"], on_result=_on_result)
-    finally:
-        db.finish_bulk_job(job_id)
+    except Exception as e:
         fresh = db.get_bulk_job(job_id) or {}
-        sent = fresh.get("sent", 0)
-        failed = fresh.get("failed", 0)
-        log(f"[#{job_id}] finished: sent={sent} failed={failed}")
-        if failed > 0:
-            telegram_notify(
-                f"⚠️ 予約配信 #{job_id} 完了\n"
-                f"件名: {job.get('subject', '')[:60]}\n"
-                f"送信成功: {sent} / 失敗: {failed}"
-            )
-        else:
-            telegram_notify(
-                f"✅ 予約配信 #{job_id} 完了\n"
-                f"件名: {job.get('subject', '')[:60]}\n"
-                f"送信: {sent}通"
-            )
+        sent = int(fresh.get("sent", 0) or 0)
+        failed = int(fresh.get("failed", 0) or 0)
+        remaining = max(0, len(recipients) - (sent + failed))
+        if remaining > 0:
+            db.increment_bulk_job(job_id, failed_delta=remaining)
+        db.fail_bulk_job(job_id)
+        fresh = db.get_bulk_job(job_id) or {}
+        sent = int(fresh.get("sent", 0) or 0)
+        failed = int(fresh.get("failed", 0) or 0)
+        log(f"[#{job_id}] finished with fatal error: sent={sent} failed={failed} err={e}")
+        telegram_notify(
+            f"❌ 予約配信 #{job_id} 実行エラー\n"
+            f"件名: {job.get('subject', '')[:60]}\n"
+            f"送信成功: {sent} / 失敗: {failed}\n"
+            f"error: {e}"
+        )
+        return
+
+    db.finish_bulk_job(job_id)
+    fresh = db.get_bulk_job(job_id) or {}
+    sent = fresh.get("sent", 0)
+    failed = fresh.get("failed", 0)
+    log(f"[#{job_id}] finished: sent={sent} failed={failed}")
+    if failed > 0:
+        telegram_notify(
+            f"⚠️ 予約配信 #{job_id} 完了\n"
+            f"件名: {job.get('subject', '')[:60]}\n"
+            f"送信成功: {sent} / 失敗: {failed}"
+        )
+    else:
+        telegram_notify(
+            f"✅ 予約配信 #{job_id} 完了\n"
+            f"件名: {job.get('subject', '')[:60]}\n"
+            f"送信: {sent}通"
+        )
 
 
 def main() -> None:
@@ -181,7 +206,7 @@ def main() -> None:
             log(f"[#{j['id']}] ERROR: {e}\n{traceback.format_exc()}")
             try:
                 import db as _db
-                _db.finish_bulk_job(j["id"])
+                _db.fail_bulk_job(j["id"])
             except Exception:
                 pass
             telegram_notify(f"❌ 予約配信 #{j['id']} 実行エラー: {e}")
