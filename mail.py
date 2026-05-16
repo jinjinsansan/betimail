@@ -2,6 +2,8 @@
 SendParams は TypedDict なので **kwargs ではなく dict として渡す必要がある。
 """
 import html as html_lib
+import os
+import time
 import resend
 from typing import Optional
 from config import (
@@ -104,6 +106,12 @@ def send_reply(
     return send_email(to_email, to_name, subject, body, headers=headers or None)
 
 
+# Resend は free/standard プランで 2 req/秒。
+# 実測で 0.55s だと数件 rate-limit に引っかかったため、安全マージンを取って 0.8s をデフォルトに。
+# プラン引き上げ時は BULK_SEND_INTERVAL_SECONDS=0.0 で無効化可能。
+BULK_SEND_INTERVAL_SECONDS = float(os.getenv("BULK_SEND_INTERVAL_SECONDS", "0.8"))
+
+
 def send_bulk_emails(
     recipients: list[dict],
     subject: str,
@@ -114,8 +122,12 @@ def send_bulk_emails(
     recipients: [{"name": ..., "email": ..., "nft_type": ...}, ...]
     body_template: {name}/{nft_type}/{email} プレースホルダ対応
     on_result(member, status, result_dict) コールバック（毎件呼ばれる）
+
+    Resend の rate limit (2 req/秒) を遵守するため、各 send 後に
+    BULK_SEND_INTERVAL_SECONDS 秒スリープする。
     """
     results = []
+    last_send_at = 0.0
     for r in recipients:
         try:
             body = body_template.format(
@@ -132,12 +144,19 @@ def send_bulk_emails(
                 on_result(r, "error", entry)
             continue
 
+        # スロットリング: 前回送信から BULK_SEND_INTERVAL_SECONDS 秒経過するまで待つ
+        if BULK_SEND_INTERVAL_SECONDS > 0 and last_send_at > 0:
+            elapsed = time.monotonic() - last_send_at
+            if elapsed < BULK_SEND_INTERVAL_SECONDS:
+                time.sleep(BULK_SEND_INTERVAL_SECONDS - elapsed)
+
         try:
             email_id = send_email(r["email"], r.get("name", ""), subject, body)
             entry = {"email": r["email"], "status": "sent", "id": email_id, "body": body}
         except Exception as e:
             log.exception("Bulk send failure to %s", r.get("email"))
             entry = {"email": r["email"], "status": "error", "error": str(e), "body": body}
+        last_send_at = time.monotonic()
         results.append(entry)
         if on_result:
             on_result(r, entry["status"], entry)
