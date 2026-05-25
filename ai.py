@@ -6,6 +6,8 @@
 """
 import json
 import os
+import time
+import random
 import anthropic
 from typing import Optional
 from config import (
@@ -17,6 +19,34 @@ from logging_config import get_logger
 log = get_logger(__name__)
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+
+# リトライ可能な一過性エラー
+_RETRYABLE = (
+    anthropic.RateLimitError,
+    anthropic.APIStatusError,
+    anthropic.APIConnectionError,
+    anthropic.APITimeoutError,
+)
+
+
+def _call_with_retry(**kwargs) -> anthropic.types.Message:
+    """Anthropic API 呼び出し（指数バックオフリトライ付き）。"""
+    last_exc = None
+    for attempt in range(3):
+        try:
+            return client.messages.create(**kwargs)
+        except _RETRYABLE as e:
+            last_exc = e
+            status = getattr(e, "status_code", None)
+            # 4xx（429以外）はクライアントエラーなのでリトライしない
+            if status and 400 <= status < 500 and status != 429:
+                raise
+            if attempt == 2:
+                raise
+            delay = (2 ** attempt) + random.random()
+            log.warning("AI API retry %d/3 after %.1fs: %s", attempt + 1, delay, e)
+            time.sleep(delay)
+    raise last_exc  # type: ignore[misc]
 
 
 def _load_knowledge() -> str:
@@ -233,9 +263,9 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
     messages = history_messages + [{"role": "user", "content": current_prompt}]
 
     try:
-        message = client.messages.create(
+        message = _call_with_retry(
             model=ANTHROPIC_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             system=_build_system_blocks(),
             tools=[_REPLY_TOOL],
             tool_choice={"type": "tool", "name": "submit_reply"},
@@ -275,6 +305,11 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
                 text = block.text
                 break
         result = _fallback_parse(text)
+
+    # max_tokens で出力が切れた場合、人手確認に回す
+    if getattr(message, "stop_reason", None) == "max_tokens":
+        result["needs_human"] = True
+        result["reason"] = (result.get("reason") or "") + " / 出力がmax_tokensで途切れたため要確認"
 
     conf = float(result.get("confidence", 0.0))
     if conf < AI_CONFIDENCE_THRESHOLD:
@@ -360,9 +395,9 @@ def regenerate_reply(
 submit_reply ツールで提出してください。"""
 
     try:
-        message = client.messages.create(
+        message = _call_with_retry(
             model=ANTHROPIC_MODEL,
-            max_tokens=2048,
+            max_tokens=4096,
             system=_build_system_blocks(),
             tools=[_REPLY_TOOL],
             tool_choice={"type": "tool", "name": "submit_reply"},

@@ -841,11 +841,11 @@ async def webhook_email(
         try:
             import httpx
             from config import RESEND_API_KEY
-            r = httpx.get(
-                f"https://api.resend.com/emails/inbound/{email_id}",
-                headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-                timeout=10.0,
-            )
+            async with httpx.AsyncClient(timeout=10.0) as cli:
+                r = await cli.get(
+                    f"https://api.resend.com/inbound/emails/{email_id}",
+                    headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+                )
             if r.status_code == 200:
                 full = r.json()
                 body_text = full.get("text") or full.get("html") or ""
@@ -853,7 +853,7 @@ async def webhook_email(
                     message_id = full.get("message_id", "")
                 log.info("Fetched inbound body: %d chars", len(body_text))
             else:
-                log.warning("Inbound fetch failed: HTTP %d %s", r.status_code, r.text[:200])
+                log.error("Inbound fetch failed: HTTP %d %s url=https://api.resend.com/inbound/emails/%s", r.status_code, r.text[:200], email_id)
         except Exception:
             log.exception("Failed to fetch inbound email body")
 
