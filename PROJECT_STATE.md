@@ -145,8 +145,8 @@ RESEND_FROM_NAME=beti 運営サポート
 RESEND_WEBHOOK_SECRET=<set>    # whsec_... (rotate 推奨)
 
 # Anthropic
-ANTHROPIC_API_KEY=<set>        # sk-ant-... (rotate 推奨)
-ANTHROPIC_MODEL=claude-opus-4-7
+DEEPSEEK_API_KEY=<set>        # sk-... 
+DEEPSEEK_MODEL=deepseek-chat
 AI_CONFIDENCE_THRESHOLD=0.75   # 0.75 未満は人手承認
 AI_HISTORY_DEPTH=5
 
@@ -606,7 +606,7 @@ PYTHONUTF8=1 python -m pytest --tb=short
 ### よくある問題のリカバリ
 
 - **Vercel ビルド失敗**: 通常 main 押せば自動デプロイ。Vercel dashboard で確認
-- **AI 反応が遅い/失敗**: ANTHROPIC_API_KEY 確認 + コンテナ再起動
+- **AI 反応が遅い/失敗**: DEEPSEEK_API_KEY 確認 + コンテナ再起動
 - **メールが届かない**: Resend ダッシュボードで bounce 状態確認、ドメイン verified か確認
 - **Telegram 通知が来ない**: TELEGRAM_BOT_TOKEN と CHAT_ID が .env に正しく入っているか確認
 - **cron が動かない**: `systemctl status cron` で確認、ログを確認

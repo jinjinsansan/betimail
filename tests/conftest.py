@@ -19,7 +19,7 @@ def temp_data(monkeypatch, tmp_path):
     monkeypatch.setenv("BETIMAIL_DB_PATH", str(db_path))
     monkeypatch.setenv("RESEND_API_KEY", "test")
     monkeypatch.setenv("RESEND_FROM_EMAIL", "test@example.com")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "")
     monkeypatch.setenv("ADMIN_PASSWORD", "")
     monkeypatch.setenv("SEND_WELCOME_EMAIL", "false")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")

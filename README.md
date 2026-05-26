@@ -51,7 +51,7 @@ Copy-Item .env.example .env
 
 - `RESEND_API_KEY` — Resend のAPIキー
 - `RESEND_FROM_EMAIL` — 送信元（Resend で検証済みドメイン）
-- `ANTHROPIC_API_KEY` — Anthropic のAPIキー
+- `DEEPSEEK_API_KEY` — DeepSeek のAPIキー (OpenAI互換)
 - `ADMIN_PASSWORD` — **本番運用では必須**。未設定だと管理画面が公開状態になる
 
 **任意（推奨）:**

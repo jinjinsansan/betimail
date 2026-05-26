@@ -1,40 +1,43 @@
-"""Claude による返信下書き生成。
+"""DeepSeek による返信下書き生成。
 
 - 知識ベース (ai_knowledge.md) をシステムプロンプトに含める
-- Anthropic prompt caching を使い、コンテキスト料金を抑制
-- tool_use で構造化出力を確実化
+- OpenAI互換APIで tool calling を使って構造化出力を確実化
 """
 import json
 import os
 import time
 import random
-import anthropic
+import openai
 from typing import Optional
 from config import (
-    ANTHROPIC_API_KEY, ANTHROPIC_MODEL, AI_CONFIDENCE_THRESHOLD,
-    AI_HISTORY_DEPTH, AI_KNOWLEDGE_PATH, ALWAYS_HUMAN_APPROVAL,
+    DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL,
+    AI_CONFIDENCE_THRESHOLD, AI_HISTORY_DEPTH, AI_KNOWLEDGE_PATH,
+    ALWAYS_HUMAN_APPROVAL,
 )
 from logging_config import get_logger
 
 log = get_logger(__name__)
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
+client = openai.OpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url=DEEPSEEK_BASE_URL,
+) if DEEPSEEK_API_KEY else None
 
 # リトライ可能な一過性エラー
 _RETRYABLE = (
-    anthropic.RateLimitError,
-    anthropic.APIStatusError,
-    anthropic.APIConnectionError,
-    anthropic.APITimeoutError,
+    openai.RateLimitError,
+    openai.APIStatusError,
+    openai.APIConnectionError,
+    openai.APITimeoutError,
 )
 
 
-def _call_with_retry(**kwargs) -> anthropic.types.Message:
-    """Anthropic API 呼び出し（指数バックオフリトライ付き）。"""
+def _call_with_retry(**kwargs):
+    """OpenAI互換API呼び出し（指数バックオフリトライ付き）。"""
     last_exc = None
     for attempt in range(3):
         try:
-            return client.messages.create(**kwargs)
+            return client.chat.completions.create(**kwargs)
         except _RETRYABLE as e:
             last_exc = e
             status = getattr(e, "status_code", None)
@@ -90,7 +93,7 @@ beti 運営サポート
 
 ## 提出方法
 
-submit_reply ツールを必ず使って返信を提出してください。
+submit_reply 関数を必ず使って返信を提出してください。
 
 `confidence` は 0.0〜1.0 の自信度。`needs_human` は人手承認の要否。
 迷ったら常に低めの confidence を設定してください。誤った自動送信は信頼を損ねます。
@@ -100,32 +103,41 @@ submit_reply ツールを必ず使って返信を提出してください。
 """
 
 
+def _build_system_prompt() -> str:
+    """システムプロンプト（ベース + 知識ベース）を返す。"""
+    prompt = SYSTEM_PROMPT_BASE
+    if _KNOWLEDGE:
+        prompt += "\n\n## 知識ベース（beti コミュニティの背景・現状）\n\n" + _KNOWLEDGE
+    return prompt
+
+
 _REPLY_TOOL = {
-    "name": "submit_reply",
-    "description": "メール返信の下書きと、管理者確認の要否を提出します。",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "reply": {
-                "type": "string",
-                "description": "メール本文（日本語）。署名「beti 運営サポート」まで含めて完成形で返す。",
+    "type": "function",
+    "function": {
+        "name": "submit_reply",
+        "description": "メール返信の下書きと、管理者確認の要否を提出します。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reply": {
+                    "type": "string",
+                    "description": "メール本文（日本語）。署名「beti 運営サポート」まで含めて完成形で返す。",
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "自信度 0.0〜1.0。自動送信して問題ないと判断する度合い。迷ったら低めに。",
+                },
+                "needs_human": {
+                    "type": "boolean",
+                    "description": "管理者（仁氏）の確認が必要かどうか。",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "needs_human が true の場合の理由を簡潔に。",
+                },
             },
-            "confidence": {
-                "type": "number",
-                "description": "自信度 0.0〜1.0。自動送信して問題ないと判断する度合い。迷ったら低めに。",
-                "minimum": 0.0,
-                "maximum": 1.0,
-            },
-            "needs_human": {
-                "type": "boolean",
-                "description": "管理者（仁氏）の確認が必要かどうか。",
-            },
-            "reason": {
-                "type": "string",
-                "description": "needs_human が true の場合の理由を簡潔に。",
-            },
+            "required": ["reply", "confidence", "needs_human"],
         },
-        "required": ["reply", "confidence", "needs_human"],
     },
 }
 
@@ -145,22 +157,6 @@ def _build_history_messages(history: list[dict]) -> list[dict]:
                 "content": f"[過去の返信]\n件名: {h.get('subject') or '(なし)'}\n本文:\n{h.get('body', '')}",
             })
     return messages
-
-
-def _build_system_blocks() -> list[dict]:
-    """システムプロンプトを cache_control 対応のブロックリストで返す。
-
-    知識ベース部分は長いので prompt cache を利かせる。"""
-    blocks: list[dict] = [
-        {"type": "text", "text": SYSTEM_PROMPT_BASE},
-    ]
-    if _KNOWLEDGE:
-        blocks.append({
-            "type": "text",
-            "text": "\n\n## 知識ベース（beti コミュニティの背景・現状）\n\n" + _KNOWLEDGE,
-            "cache_control": {"type": "ephemeral"},
-        })
-    return blocks
 
 
 def _format_purchase_summary(purchases: dict) -> str:
@@ -208,7 +204,7 @@ def generate_reply(
             "reply": "",
             "confidence": 0.0,
             "needs_human": True,
-            "reason": "ANTHROPIC_API_KEY が未設定です",
+            "reason": "DEEPSEEK_API_KEY が未設定です",
         }
 
     history_messages = _build_history_messages(history or [])
@@ -219,7 +215,7 @@ def generate_reply(
 
     if is_member:
         guidance = """このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
-submit_reply ツールで提出してください。
+submit_reply 関数で提出してください。
 
 ★ 購入履歴が記載されている場合、メンバー様の事情・損失感を理解した上で
 お返事してください。ただし、具体的な金額・時期・配当の数字は答えず、
@@ -260,16 +256,20 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
 
 {guidance}"""
 
-    messages = history_messages + [{"role": "user", "content": current_prompt}]
+    messages = [
+        {"role": "system", "content": _build_system_prompt()},
+    ] + history_messages + [
+        {"role": "user", "content": current_prompt},
+    ]
 
     try:
-        message = _call_with_retry(
-            model=ANTHROPIC_MODEL,
+        response = _call_with_retry(
+            model=DEEPSEEK_MODEL,
             max_tokens=4096,
-            system=_build_system_blocks(),
-            tools=[_REPLY_TOOL],
-            tool_choice={"type": "tool", "name": "submit_reply"},
+            temperature=0.7,
             messages=messages,
+            tools=[_REPLY_TOOL],
+            tool_choice={"type": "function", "function": {"name": "submit_reply"}},
         )
     except Exception as e:
         log.exception("AI generate_reply API error")
@@ -280,34 +280,34 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
             "reason": f"AI API エラー: {e}",
         }
 
-    # キャッシュ統計をログ出力
+    choice = response.choices[0]
+
+    # 使用量統計をログ出力
     try:
-        usage = message.usage
-        cache_read = getattr(usage, "cache_read_input_tokens", 0)
-        cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
+        usage = response.usage
         log.info(
-            "AI usage: input=%s output=%s cache_read=%s cache_creation=%s",
-            usage.input_tokens, usage.output_tokens, cache_read, cache_creation,
+            "AI usage: prompt=%s completion=%s total=%s",
+            usage.prompt_tokens, usage.completion_tokens, usage.total_tokens,
         )
     except Exception:
         pass
 
     result: Optional[dict] = None
-    for block in message.content:
-        if getattr(block, "type", None) == "tool_use":
-            result = dict(block.input)
-            break
+    if choice.message.tool_calls:
+        tc = choice.message.tool_calls[0]
+        if tc.function.name == "submit_reply":
+            try:
+                result = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                pass
 
     if result is None:
-        text = ""
-        for block in message.content:
-            if getattr(block, "type", None) == "text":
-                text = block.text
-                break
+        # フォールバック: テキスト出力からパース試行
+        text = choice.message.content or ""
         result = _fallback_parse(text)
 
     # max_tokens で出力が切れた場合、人手確認に回す
-    if getattr(message, "stop_reason", None) == "max_tokens":
+    if choice.finish_reason == "length":
         result["needs_human"] = True
         result["reason"] = (result.get("reason") or "") + " / 出力がmax_tokensで途切れたため要確認"
 
@@ -362,7 +362,7 @@ def regenerate_reply(
             "reply": previous_draft,
             "confidence": 0.0,
             "needs_human": True,
-            "reason": "ANTHROPIC_API_KEY 未設定で再生成不可",
+            "reason": "DEEPSEEK_API_KEY 未設定で再生成不可",
         }
 
     purchase_block = ""
@@ -392,16 +392,19 @@ def regenerate_reply(
 基本原則（お詫び・誠実・約束しない、署名「beti 運営サポート」）は守りつつ、
 指示の意図をくみ取って修正してください。
 
-submit_reply ツールで提出してください。"""
+submit_reply 関数で提出してください。"""
 
     try:
-        message = _call_with_retry(
-            model=ANTHROPIC_MODEL,
+        response = _call_with_retry(
+            model=DEEPSEEK_MODEL,
             max_tokens=4096,
-            system=_build_system_blocks(),
+            temperature=0.7,
+            messages=[
+                {"role": "system", "content": _build_system_prompt()},
+                {"role": "user", "content": current_prompt},
+            ],
             tools=[_REPLY_TOOL],
-            tool_choice={"type": "tool", "name": "submit_reply"},
-            messages=[{"role": "user", "content": current_prompt}],
+            tool_choice={"type": "function", "function": {"name": "submit_reply"}},
         )
     except Exception as e:
         log.exception("AI regenerate_reply API error")
@@ -412,17 +415,18 @@ submit_reply ツールで提出してください。"""
             "reason": f"AI再生成エラー: {e}",
         }
 
+    choice = response.choices[0]
+
     result: Optional[dict] = None
-    for block in message.content:
-        if getattr(block, "type", None) == "tool_use":
-            result = dict(block.input)
-            break
+    if choice.message.tool_calls:
+        tc = choice.message.tool_calls[0]
+        if tc.function.name == "submit_reply":
+            try:
+                result = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                pass
     if result is None:
-        text = ""
-        for block in message.content:
-            if getattr(block, "type", None) == "text":
-                text = block.text
-                break
+        text = choice.message.content or ""
         result = _fallback_parse(text)
 
     # 全件人手承認モードなら常に needs_human=True に

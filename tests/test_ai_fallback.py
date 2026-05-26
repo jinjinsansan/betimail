@@ -29,4 +29,4 @@ def test_generate_reply_without_api_key(monkeypatch):
         original_subject="?", original_body="hi",
     )
     assert r["needs_human"] is True
-    assert "ANTHROPIC_API_KEY" in r["reason"]
+    assert "DEEPSEEK_API_KEY" in r["reason"]

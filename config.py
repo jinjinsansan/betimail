@@ -9,9 +9,10 @@ RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
 RESEND_FROM_NAME = os.getenv("RESEND_FROM_NAME", "コミュニティサポート")
 RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET", "")
 
-# ── Anthropic ───────────────────────────────────────────
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-7")
+# ── DeepSeek (OpenAI互換) ─────────────────────────────
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
 # ── Telegram (comma-separated chat_ids supported) ───────
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
