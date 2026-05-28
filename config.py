@@ -8,6 +8,11 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM_EMAIL = os.getenv("RESEND_FROM_EMAIL", "")
 RESEND_FROM_NAME = os.getenv("RESEND_FROM_NAME", "コミュニティサポート")
 RESEND_WEBHOOK_SECRET = os.getenv("RESEND_WEBHOOK_SECRET", "")
+_resend_from_domain = RESEND_FROM_EMAIL.rsplit("@", 1)[1].lower() if "@" in RESEND_FROM_EMAIL else ""
+_raw_inbound_domains = os.getenv("RESEND_INBOUND_DOMAINS", _resend_from_domain)
+RESEND_INBOUND_DOMAINS: list[str] = [
+    d.strip().lower().lstrip("@") for d in _raw_inbound_domains.split(",") if d.strip()
+]
 
 # ── DeepSeek (OpenAI互換) ─────────────────────────────
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")

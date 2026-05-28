@@ -8,6 +8,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
+from email.utils import getaddresses
 from typing import Optional
 
 from fastapi import (
@@ -38,7 +39,7 @@ from config import (
     CORS_ORIGINS, CORS_ORIGIN_REGEX, AI_HISTORY_DEPTH,
     PUBLIC_CHECK_EXPOSE_DETAILS, PUBLIC_CHECK_EXPOSE_NAME, PUBLIC_CHECK_EXPOSE_NFT_TYPES,
     PUBLIC_CHECK_REQUIRE_OTP, PUBLIC_CHECK_OTP_TTL_SECONDS, PUBLIC_CHECK_OTP_RESEND_SECONDS,
-    RESEND_API_KEY, RESEND_FROM_EMAIL,
+    RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_INBOUND_DOMAINS,
 )
 
 
@@ -829,6 +830,15 @@ async def webhook_email(
     message_id = data.get("message_id") or ""
     in_reply_to = data.get("in_reply_to") or ""
     email_id = data.get("email_id") or data.get("id") or ""
+    to_emails = _extract_email_list(data.get("to") or data.get("recipients") or [])
+    if not _is_allowed_inbound_recipient(to_emails):
+        log.info(
+            "Webhook ignored: recipient domain not allowed to=%s allowed=%s",
+            to_emails,
+            RESEND_INBOUND_DOMAINS,
+        )
+        return {"status": "ignored", "reason": "recipient_domain_not_allowed"}
+
     if message_id and db.has_received_message_id(message_id):
         log.info("Webhook duplicate skipped by message_id=%s", message_id)
         return {"status": "duplicate"}
@@ -849,6 +859,8 @@ async def webhook_email(
             if r.status_code == 200:
                 full = r.json()
                 body_text = full.get("text") or full.get("html") or ""
+                if not to_emails:
+                    to_emails = _extract_email_list(full.get("to") or full.get("recipients") or [])
                 if not message_id:
                     message_id = full.get("message_id", "")
                 log.info("Fetched inbound body: %d chars", len(body_text))
@@ -856,6 +868,14 @@ async def webhook_email(
                 log.error("Inbound fetch failed: HTTP %d %s url=https://api.resend.com/inbound/emails/%s", r.status_code, r.text[:200], email_id)
         except Exception:
             log.exception("Failed to fetch inbound email body")
+
+    if not _is_allowed_inbound_recipient(to_emails):
+        log.info(
+            "Webhook ignored after hydrate: recipient domain not allowed to=%s allowed=%s",
+            to_emails,
+            RESEND_INBOUND_DOMAINS,
+        )
+        return {"status": "ignored", "reason": "recipient_domain_not_allowed"}
 
     # "from" が "Name <email@x>" 形式の場合の分解
     if "<" in sender_email and ">" in sender_email:
@@ -969,6 +989,37 @@ async def webhook_email(
 
     bg.add_task(process)
     return {"status": "received"}
+
+
+def _is_allowed_inbound_recipient(to_emails: list[str]) -> bool:
+    """Return True when the inbound event belongs to this Betimail domain."""
+    if not RESEND_INBOUND_DOMAINS:
+        return True
+    if not to_emails:
+        log.warning("Webhook recipient missing; continuing allowed=%s", RESEND_INBOUND_DOMAINS)
+        return True
+    return any(
+        email.rsplit("@", 1)[1].lower() in RESEND_INBOUND_DOMAINS
+        for email in to_emails
+        if "@" in email
+    )
+
+
+def _extract_email_list(value) -> list[str]:
+    """Extract normalized email addresses from Resend recipient fields."""
+    if value is None:
+        return []
+    raw_items = value if isinstance(value, list) else [value]
+    addresses: list[str] = []
+    for item in raw_items:
+        if isinstance(item, str):
+            parsed = getaddresses([item])
+            addresses.extend(email.lower() for _, email in parsed if email)
+        elif isinstance(item, dict):
+            raw = item.get("email") or item.get("address") or item.get("value") or ""
+            parsed = getaddresses([str(raw)])
+            addresses.extend(email.lower() for _, email in parsed if email)
+    return addresses
 
 
 if __name__ == "__main__":

@@ -31,6 +31,16 @@ def test_health_endpoint(monkeypatch):
     assert r.json()["status"] == "ok"
 
 
+def test_inbound_recipient_domain_filter(monkeypatch):
+    monkeypatch.setenv("RESEND_FROM_EMAIL", "support@betimail.uk")
+    client = _fresh_client(monkeypatch)
+
+    import main
+
+    assert main._is_allowed_inbound_recipient(["support@betimail.uk"]) is True
+    assert main._is_allowed_inbound_recipient(["support@1540bo.com"]) is False
+
+
 def test_add_and_list_members(monkeypatch):
     client = _fresh_client(monkeypatch)
     headers = _auth_headers(client)
