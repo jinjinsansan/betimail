@@ -111,22 +111,23 @@ CREATE TABLE IF NOT EXISTS purchases (
 );
 
 CREATE TABLE IF NOT EXISTS withdraw_requests (
-    -- nftportal.site の出金申請（会員権NFT 等の買い取り資金支払い）
+    -- 出金申請（買い取り資金支払い等）。source で取得元を区別する。
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    external_id INTEGER UNIQUE,          -- nftportal の出金申請レコード id
+    external_id INTEGER UNIQUE,          -- 取得元の出金申請レコード id（source 毎に名前空間を分けるため AFI は offset 付与）
+    source TEXT DEFAULT 'nftportal',     -- 取得元: 'nftportal' | 'afi'
     email TEXT NOT NULL,
     name TEXT,
-    user_id INTEGER,                     -- nftportal の user_id
+    user_id INTEGER,                     -- 取得元の user_id
     amount_usdt REAL NOT NULL,           -- 支払額 (USDT)
     destination TEXT,                    -- 送金先ウォレットアドレス
     type INTEGER,
-    status INTEGER,                      -- nftportal 側の status (2 = 完了)
+    status INTEGER,                      -- 取得元 status。nftportal: 2=完了 / afi: status_request 1=未承認,2=承認済
     requested_at TEXT,                   -- created_at (申請日時)
     action_at TEXT,                      -- 処理日時
     secret_code TEXT,
     packet TEXT,
     title TEXT,
-    nft_kind TEXT DEFAULT '会員権NFT',    -- 対象 NFT 種別 (現状は会員権のみ)
+    nft_kind TEXT DEFAULT '会員権NFT',    -- 対象 NFT 種別
     raw_json TEXT,                       -- 元レコード保管
     imported_at TEXT NOT NULL,
     notified_at TEXT                     -- Telegram 通知済みのフラグ
@@ -176,6 +177,8 @@ def init_db() -> None:
         _ensure_column(conn, "bulk_send_jobs", "scheduled_at", "scheduled_at TEXT")
         _ensure_column(conn, "bulk_send_jobs", "segment", "segment TEXT")
         _ensure_column(conn, "bulk_send_jobs", "confirm_all", "confirm_all INTEGER DEFAULT 0")
+        # 出金申請の取得元（既存行は nftportal 由来）
+        _ensure_column(conn, "withdraw_requests", "source", "source TEXT DEFAULT 'nftportal'")
         try:
             conn.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_recv_message_id_unique
@@ -850,11 +853,12 @@ def upsert_withdraw(record: dict) -> bool:
         if existing:
             conn.execute(
                 """UPDATE withdraw_requests
-                   SET email=?, name=?, user_id=?, amount_usdt=?, destination=?,
+                   SET source=?, email=?, name=?, user_id=?, amount_usdt=?, destination=?,
                        type=?, status=?, requested_at=?, action_at=?, secret_code=?,
                        packet=?, title=?, nft_kind=?, raw_json=?
                    WHERE id=?""",
                 (
+                    record.get("source", "nftportal"),
                     record.get("email", "").strip().lower(),
                     record.get("name"),
                     record.get("user_id"),
@@ -875,11 +879,12 @@ def upsert_withdraw(record: dict) -> bool:
             return False
         conn.execute(
             """INSERT INTO withdraw_requests
-               (external_id, email, name, user_id, amount_usdt, destination, type, status,
+               (external_id, source, email, name, user_id, amount_usdt, destination, type, status,
                 requested_at, action_at, secret_code, packet, title, nft_kind, raw_json, imported_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 record["external_id"],
+                record.get("source", "nftportal"),
                 record.get("email", "").strip().lower(),
                 record.get("name"),
                 record.get("user_id"),
@@ -900,12 +905,22 @@ def upsert_withdraw(record: dict) -> bool:
         return True
 
 
-def list_withdraws(limit: int = 200, email: Optional[str] = None) -> list[dict]:
+def list_withdraws(
+    limit: int = 200,
+    email: Optional[str] = None,
+    source: Optional[str] = None,
+) -> list[dict]:
     q = "SELECT * FROM withdraw_requests"
+    conds: list[str] = []
     args: list = []
     if email:
-        q += " WHERE email = ?"
+        conds.append("email = ?")
         args.append(email.strip().lower())
+    if source:
+        conds.append("source = ?")
+        args.append(source)
+    if conds:
+        q += " WHERE " + " AND ".join(conds)
     q += " ORDER BY requested_at DESC LIMIT ?"
     args.append(limit)
     with get_conn() as conn:

@@ -147,9 +147,15 @@ export const api = {
   },
 
   withdraws: {
-    list: (limit = 500, email?: string) =>
-      request<WithdrawsList>(`/api/withdraws?limit=${limit}${email ? `&email=${encodeURIComponent(email)}` : ""}`),
-    stats: () => request<WithdrawStats>("/api/withdraws/stats"),
+    // source 既定はバックエンド側で "nftportal"（ポータル=買い取り）。afi はアフィリエイト出金。
+    list: (limit = 500, email?: string, source?: string) =>
+      request<WithdrawsList>(
+        `/api/withdraws?limit=${limit}` +
+          `${email ? `&email=${encodeURIComponent(email)}` : ""}` +
+          `${source ? `&source=${encodeURIComponent(source)}` : ""}`
+      ),
+    stats: (source?: string) =>
+      request<WithdrawStats>(`/api/withdraws/stats${source ? `?source=${encodeURIComponent(source)}` : ""}`),
   },
 
   templates: {

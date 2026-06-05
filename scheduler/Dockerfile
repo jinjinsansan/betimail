@@ -10,6 +10,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 COPY config.py db.py logging_config.py /app/
 COPY tools/daily_lucky_reward.py /app/tools/daily_lucky_reward.py
 COPY tools/sync_nftportal_withdraws.py /app/tools/sync_nftportal_withdraws.py
+COPY tools/sync_afi_withdraws.py /app/tools/sync_afi_withdraws.py
 
 # 既定はラッキー報酬分配スクリプトを実行
 CMD ["python", "/app/tools/daily_lucky_reward.py"]
