@@ -140,6 +140,7 @@ export type MemberPurchases = {
 export type WithdrawRequest = {
   id: number;
   external_id: number;
+  source?: string;  // 'nftportal' (ポータル/買い取り) | 'afi' (アフィリエイト)
   email: string;
   name: string;
   user_id?: number | null;

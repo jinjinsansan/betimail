@@ -14,6 +14,7 @@ import MembersTab from "./tabs/MembersTab";
 import HistoryTab from "./tabs/HistoryTab";
 import JobsTab from "./tabs/JobsTab";
 import WithdrawsTab from "./tabs/WithdrawsTab";
+import AfiWithdrawsTab from "./tabs/AfiWithdrawsTab";
 
 type Props = { onLogout: () => void };
 
@@ -102,6 +103,7 @@ export default function Dashboard({ onLogout }: Props) {
     members: ["Betimail", "メール", "メンバー管理"],
     history: ["Betimail", "メール", "送受信履歴"],
     withdraws: ["Betimail", "買い取り", "出金履歴"],
+    "afi-withdraws": ["Betimail", "買い取り", "アフィリエイト出金 (afi.irah.uk)"],
     templates: ["Betimail", "設定", "テンプレート"],
     jobs: ["Betimail", "設定", "送信ジョブ"],
   };
@@ -143,6 +145,7 @@ export default function Dashboard({ onLogout }: Props) {
             {tab === "members" && <MembersTab members={members} notify={notify} onReload={loadAll} />}
             {tab === "history" && <HistoryTab notify={notify} />}
             {tab === "withdraws" && <WithdrawsTab notify={notify} />}
+            {tab === "afi-withdraws" && <AfiWithdrawsTab notify={notify} />}
             {tab === "jobs" && <JobsTab notify={notify} />}
           </div>
         </div>

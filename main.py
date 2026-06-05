@@ -445,9 +445,14 @@ async def api_member_withdraws(email: str, _user: str = Depends(require_admin)):
 async def api_list_withdraws(
     limit: int = 200,
     email: Optional[str] = None,
+    source: Optional[str] = "nftportal",
     _user: str = Depends(require_admin),
 ):
-    items = db.list_withdraws(limit=limit, email=email)
+    # source 既定は nftportal（ポータルサイト=買い取り）。afi はアフィリエイト出金を
+    # 別ページで閲覧するための値。"all"/空 で全件。
+    if source in ("", "all"):
+        source = None
+    items = db.list_withdraws(limit=limit, email=email, source=source)
     # 集計
     total_usdt = sum((r["amount_usdt"] or 0) for r in items)
     by_email: dict[str, dict] = {}
@@ -469,9 +474,14 @@ async def api_list_withdraws(
 
 
 @app.get("/api/withdraws/stats")
-async def api_withdraw_stats(_user: str = Depends(require_admin)):
+async def api_withdraw_stats(
+    source: Optional[str] = "nftportal",
+    _user: str = Depends(require_admin),
+):
     """ダッシュボード用の集計のみ。"""
-    items = db.list_withdraws(limit=10000)
+    if source in ("", "all"):
+        source = None
+    items = db.list_withdraws(limit=10000, source=source)
     total = sum((r["amount_usdt"] or 0) for r in items)
     return {
         "count": len(items),

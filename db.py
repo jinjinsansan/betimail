@@ -905,12 +905,22 @@ def upsert_withdraw(record: dict) -> bool:
         return True
 
 
-def list_withdraws(limit: int = 200, email: Optional[str] = None) -> list[dict]:
+def list_withdraws(
+    limit: int = 200,
+    email: Optional[str] = None,
+    source: Optional[str] = None,
+) -> list[dict]:
     q = "SELECT * FROM withdraw_requests"
+    conds: list[str] = []
     args: list = []
     if email:
-        q += " WHERE email = ?"
+        conds.append("email = ?")
         args.append(email.strip().lower())
+    if source:
+        conds.append("source = ?")
+        args.append(source)
+    if conds:
+        q += " WHERE " + " AND ".join(conds)
     q += " ORDER BY requested_at DESC LIMIT ?"
     args.append(limit)
     with get_conn() as conn:
