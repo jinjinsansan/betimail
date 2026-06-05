@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 data/betimail.db
+# 実メンバーCSV（個人情報）。サンプルは data/members.example.csv を参照。
+# リポジトリに含めるとデプロイ時に本番の実メンバーリストを上書きする事故になる。
+data/members.csv
 *.egg-info/
 .venv/
 venv/

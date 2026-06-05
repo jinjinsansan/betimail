@@ -410,14 +410,29 @@ def start_bot_thread() -> Optional[threading.Thread]:
 
 
 async def shutdown_bot() -> None:
+    """Bot を停止する。
+
+    run_polling() は bot 専用スレッドの専用イベントループ上で動いている。
+    別ループ（uvicorn 側）から `await _application.stop()` を呼ぶと停止処理が
+    そのループに紐付かず刺さり、lifespan の finally が無期限にブロックして
+    uvicorn 自体が終了できなくなる（コンテナがゾンビ化し 502 が続く）。
+
+    そこで停止シグナルは bot のループ上で `application.stop_running()` を
+    実行して送り、ここでは待たずに即座に返す。bot スレッドは daemon なので、
+    仮に停止しきれなくてもプロセス終了とともに確実に片付く。
+    """
     _bot_stop_event.set()
-    if _application is not None:
+    app = _application
+    with _bot_loop_lock:
+        loop = _bot_loop
+    if app is not None and loop is not None and loop.is_running():
         try:
-            await _application.stop()
-            await _application.shutdown()
-            log.info("Telegram bot stopped")
+            # stop_running() は run_polling() を内側からほどく。別スレッドからは
+            # call_soon_threadsafe で bot のループ上にスケジュールして呼ぶ。
+            loop.call_soon_threadsafe(app.stop_running)
+            log.info("Telegram bot stop signalled")
         except Exception:
-            log.exception("Telegram bot shutdown failure")
+            log.exception("Telegram bot shutdown signal failure")
 
 
 def send_notification_sync(

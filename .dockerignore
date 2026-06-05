@@ -4,6 +4,7 @@ __pycache__
 .gitignore
 .env
 data/betimail.db
+data/members.csv
 .venv
 venv
 tests
