@@ -153,16 +153,36 @@ def run(amount: int, email: str, password: str, dry_run: bool = False) -> dict:
         page.on("response", on_response)
 
         log("step 1: login")
-        page.goto("https://luckymustard.uk/", wait_until="domcontentloaded", timeout=30000)
-        page.wait_for_selector('input#username', timeout=15000)
+        # リトライ付き goto
+        for attempt in range(3):
+            try:
+                page.goto("https://luckymustard.uk/", wait_until="domcontentloaded", timeout=60000)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    log(f"goto luckymustard.uk attempt {attempt+1} failed ({e}), retrying in 5s...")
+                    page.wait_for_timeout(5000)
+                else:
+                    raise
+        page.wait_for_selector('input#username', timeout=30000)
         page.locator('input#username').fill(email)
         page.locator('input#password').fill(password)
         page.locator('button[type="submit"]').click()
-        page.wait_for_url("**/admin/**", timeout=20000)
-        page.wait_for_load_state("networkidle", timeout=15000)
+        page.wait_for_url("**/admin/**", timeout=30000)
+        page.wait_for_load_state("networkidle", timeout=30000)
 
         log("step 2: navigate to /admin/lucky-mustard")
-        page.goto("https://luckymustard.uk/admin/lucky-mustard", wait_until="networkidle", timeout=30000)
+        # リトライ付き
+        for attempt in range(3):
+            try:
+                page.goto("https://luckymustard.uk/admin/lucky-mustard", wait_until="domcontentloaded", timeout=60000)
+                break
+            except Exception as e:
+                if attempt < 2:
+                    log(f"goto /admin/lucky-mustard attempt {attempt+1} failed ({e}), retrying in 5s...")
+                    page.wait_for_timeout(5000)
+                else:
+                    raise
         page.screenshot(path=str(SCREENSHOT_DIR / f"{ts_tag}_01_page.png"), full_page=False)
 
         log("step 3: click yellow 報酬分配 button (trigger modal)")

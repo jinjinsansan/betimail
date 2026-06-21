@@ -71,6 +71,22 @@ def telegram_send(text: str) -> bool:
         return False
 
 
+def _playwright_goto_with_retry(page, url: str, wait_until: str = "domcontentloaded",
+                                timeout: int = 60000, max_retries: int = 2) -> None:
+    """page.goto をリトライ付きで実行。初回失敗時に5秒待って再試行。"""
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            page.goto(url, wait_until=wait_until, timeout=timeout)
+            return
+        except Exception as e:
+            last_exc = e
+            if attempt < max_retries:
+                log(f"goto {url} attempt {attempt+1} failed ({e}), retrying in 5s...")
+                page.wait_for_timeout(5000)
+    raise last_exc  # type: ignore[misc]
+
+
 def fetch_withdraws_via_playwright(start_year: int, start_month: int) -> list[dict]:
     """Playwright で login → withdraw-history を月ごとに取得。"""
     from playwright.sync_api import sync_playwright
@@ -86,13 +102,15 @@ def fetch_withdraws_via_playwright(start_year: int, start_month: int) -> list[di
         ctx = browser.new_context(locale="ja-JP")
         page = ctx.new_page()
 
-        page.goto("https://nftportal.site/auth/login", wait_until="networkidle", timeout=30000)
+        # domcontentloaded で十分（ログインフォームが出れば OK）
+        _playwright_goto_with_retry(page, "https://nftportal.site/auth/login",
+                                    wait_until="domcontentloaded", timeout=60000)
         page.locator('input#username').fill(email)
         page.locator('input#password').fill(password)
         page.locator('button[type="submit"]').first.click()
         page.wait_for_timeout(2500)
-        page.goto("https://nftportal.site/admin/withdraw-history",
-                  wait_until="networkidle", timeout=20000)
+        _playwright_goto_with_retry(page, "https://nftportal.site/admin/withdraw-history",
+                                    wait_until="domcontentloaded", timeout=60000)
 
         now = datetime.now()
         cy, cm = start_year, start_month

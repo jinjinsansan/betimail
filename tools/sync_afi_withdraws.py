@@ -113,7 +113,22 @@ def fetch_withdraws_via_playwright(start_year: int, start_month: int) -> list[di
         ctx = browser.new_context(locale="ja-JP")
         page = ctx.new_page()
 
-        page.goto("https://afi.irah.uk/auth/login", wait_until="domcontentloaded", timeout=30000)
+        # リトライ付き goto
+        def _goto_with_retry(url: str, wait_until: str = "domcontentloaded",
+                             timeout: int = 60000, max_retries: int = 2):
+            last_exc: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    page.goto(url, wait_until=wait_until, timeout=timeout)
+                    return
+                except Exception as e:
+                    last_exc = e
+                    if attempt < max_retries:
+                        log(f"goto {url} attempt {attempt+1} failed ({e}), retrying in 5s...")
+                        page.wait_for_timeout(5000)
+            raise last_exc  # type: ignore[misc]
+
+        _goto_with_retry("https://afi.irah.uk/auth/login")
         page.wait_for_selector("input#username", timeout=15000)
         page.locator("input#username").fill(email)
         page.locator("input#password").fill(password)
