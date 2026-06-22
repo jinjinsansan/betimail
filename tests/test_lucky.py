@@ -80,3 +80,18 @@ def test_lucky_distribute_requires_admin():
     # ADMIN_PASSWORD 未設定(テスト環境)なので 503、設定時は 401
     r = client.post("/api/lucky/distribute", json={"amount": 352})
     assert r.status_code in (401, 503)
+
+
+def test_cron_distribute_one_idempotent_and_dryrun():
+    import db
+    from tools import lucky_distribute as ld
+    _seed_member(db, "e@example.com", "E", nft=1)
+    r1 = ld.distribute_one(db, "2026-06-11", 352.0, dry_run=False, force=False)
+    assert r1["status"] == "done"
+    # 同じ日は二重分配されない
+    r2 = ld.distribute_one(db, "2026-06-11", 352.0, dry_run=False, force=False)
+    assert r2["status"] == "skipped_exists"
+    # 別日の試算は書き込まない
+    r3 = ld.distribute_one(db, "2026-06-12", 352.0, dry_run=True, force=False)
+    assert r3["status"] == "dry_run"
+    assert not db.lucky_distribution_exists_for_date("2026-06-12")
