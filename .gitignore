@@ -18,4 +18,9 @@ PH管理*.csv
 exports/
 data/_import/
 data/_export/
+# DBダンプ（会員PII。luckymustard等の.sqlバックアップを誤コミットしない）
+data/*.sql
+data/*.sql.gz
+data/*.dump
+backup-*.sql
 

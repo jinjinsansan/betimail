@@ -62,6 +62,35 @@ def verify_token(token: str) -> Optional[dict]:
     return payload
 
 
+def issue_member_token(email: str, ttl_seconds: int = _TOKEN_TTL_SECONDS) -> dict:
+    """ラッキーマスタード会員ポータル用のステートレストークン（scope=lucky）。"""
+    expires_at = int(time.time()) + ttl_seconds
+    payload = {"m": email, "scope": "lucky", "exp": expires_at}
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode("ascii")
+    sig = hmac.new(_derive_secret(), payload_b64.encode("ascii"), hashlib.sha256).digest()
+    sig_b64 = base64.urlsafe_b64encode(sig).rstrip(b"=").decode("ascii")
+    return {"token": f"{payload_b64}.{sig_b64}", "expires_at": expires_at, "email": email}
+
+
+def require_lucky_member(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """会員ポータル用の依存関係。scope=lucky のトークンを検証し email を返す。"""
+    if creds is None or creds.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="ログインが必要です",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = verify_token(creds.credentials)
+    if payload is None or payload.get("scope") != "lucky" or not payload.get("m"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="セッションが無効または期限切れです。再度ログインしてください",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload["m"]
+
+
 def check_credentials(username: str, password: str) -> bool:
     if not ADMIN_PASSWORD:
         return False
