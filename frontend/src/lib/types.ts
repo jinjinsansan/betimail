@@ -178,3 +178,21 @@ export type MemberWithdrawSummary = {
   total_usdt: number;
   withdraws: WithdrawRequest[];
 };
+
+export type LuckyDistribution = {
+  id: number;
+  nft: string;
+  distributed_for: string | null;
+  pool_amount: number;
+  total_nft: number;
+  rate: number | null;
+  recipients: number;
+  status: string;
+  created_by: string;
+  created_at: string;
+};
+
+export type LuckyAdminSummary = {
+  totals: { members: number; total_nft: number; total_balance: number; total_reward: number };
+  latest_distribution: LuckyDistribution | null;
+};

@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from email.utils import getaddresses
 from typing import Optional
 
@@ -260,6 +260,167 @@ async def api_public_check_verify(
     if not _verify_public_check_otp(email, body.code):
         raise HTTPException(status_code=400, detail="確認コードが無効または期限切れです")
     return _build_public_check_result(email)
+
+
+# ── ラッキーマスタード会員ポータル ──────────────────────
+# 会員のみがログインして自分の保有NFT(ステーク)枚数・日次報酬・残高・履歴を閲覧する。
+# 認証はメール OTP（_lucky_otps に分離）→ 成功で会員トークン(scope=lucky)を発行。
+_lucky_otp_lock = threading.Lock()
+_lucky_otps: dict[str, dict] = {}
+
+
+class LuckyLoginRequest(BaseModel):
+    email: EmailStr
+
+
+class LuckyVerifyRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=12)
+
+
+class LuckyDistributeRequest(BaseModel):
+    amount: float = Field(gt=0, le=100000)
+    distributed_for: Optional[str] = None
+    force: bool = False
+
+
+def _issue_lucky_otp(email: str) -> str:
+    now_ts = time.time()
+    with _lucky_otp_lock:
+        for e in [e for e, r in _lucky_otps.items() if r.get("expires_at", 0) < now_ts]:
+            _lucky_otps.pop(e, None)
+        rec = _lucky_otps.get(email)
+        if rec and (now_ts - rec.get("issued_at", 0)) < PUBLIC_CHECK_OTP_RESEND_SECONDS:
+            raise HTTPException(status_code=429, detail="確認コードの再送は少し待ってからお試しください")
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        salt = secrets.token_hex(8)
+        _lucky_otps[email] = {
+            "salt": salt,
+            "digest": hashlib.sha256((salt + code).encode("utf-8")).hexdigest(),
+            "issued_at": now_ts,
+            "expires_at": now_ts + max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+            "tries": 0,
+        }
+        return code
+
+
+def _verify_lucky_otp(email: str, code: str) -> bool:
+    now_ts = time.time()
+    normalized = (code or "").strip()
+    with _lucky_otp_lock:
+        rec = _lucky_otps.get(email)
+        if not rec or rec.get("expires_at", 0) < now_ts:
+            _lucky_otps.pop(email, None)
+            return False
+        rec["tries"] = int(rec.get("tries", 0)) + 1
+        if rec["tries"] > 8:
+            _lucky_otps.pop(email, None)
+            return False
+        digest = hashlib.sha256((rec["salt"] + normalized).encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(rec["digest"], digest):
+            return False
+        _lucky_otps.pop(email, None)
+        return True
+
+
+@app.post("/api/lucky/login")
+async def api_lucky_login(body: LuckyLoginRequest, request: Request):
+    """会員のメール OTP ログイン要求。ラッキーマスタード会員のみコードを送信する。"""
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    # 会員でなければコードを送らない（無関係な人へのメール送信を防止）
+    if not db.get_lucky_member(email):
+        return {"found": False}
+    if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+        raise HTTPException(status_code=503, detail="ログイン機能は一時的に利用できません")
+    code = _issue_lucky_otp(email)
+    body_text = (
+        "ラッキーマスタード 会員ページのログインコードです。\n\n"
+        f"ログインコード: {code}\n"
+        f"有効期限: {max(60, PUBLIC_CHECK_OTP_TTL_SECONDS) // 60} 分\n\n"
+        "このコードに心当たりがない場合は破棄してください。"
+    )
+    try:
+        mail.send_email(
+            to_email=email, to_name="",
+            subject="【ラッキーマスタード】ログインコード", body=body_text,
+        )
+    except Exception:
+        log.exception("Lucky login OTP send failure")
+        raise HTTPException(status_code=503, detail="コード送信に失敗しました。時間をおいて再試行してください")
+    return {
+        "verification_required": True,
+        "masked_email": _mask_email(email),
+        "expires_in": max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+    }
+
+
+@app.post("/api/lucky/verify")
+async def api_lucky_verify(body: LuckyVerifyRequest, request: Request):
+    """OTP 検証 → 会員トークン発行 + ダッシュボードを返す。"""
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    if not _verify_lucky_otp(email, body.code):
+        raise HTTPException(status_code=400, detail="コードが無効または期限切れです")
+    dash = db.get_lucky_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="会員情報が見つかりません")
+    tok = auth_mod.issue_member_token(email)
+    return {"token": tok["token"], "expires_at": tok["expires_at"], "dashboard": dash}
+
+
+@app.get("/api/lucky/me")
+async def api_lucky_me(email: str = Depends(auth_mod.require_lucky_member)):
+    """会員トークンで自分のダッシュボードを再取得。"""
+    dash = db.get_lucky_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="会員情報が見つかりません")
+    return dash
+
+
+@app.post("/api/lucky/distribute")
+async def api_lucky_distribute(
+    body: LuckyDistributeRequest,
+    _admin: str = Depends(require_admin),
+):
+    """管理者: 日次報酬を全保有者へステーク枚数比例で分配する。
+
+    同じ日に二重分配しないよう、対象日(JST)に既存があれば 409 を返す。
+    force=true で上書き実行できる。
+    """
+    if body.distributed_for:
+        target = body.distributed_for
+        date_str = target[:10]
+    else:
+        date_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+        target = f"{date_str} 20:00:00"
+    if not body.force and db.lucky_distribution_exists_for_date(date_str):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{date_str} は既に分配済みです。再度分配する場合は確認のうえ実行してください。",
+        )
+    try:
+        result = db.create_lucky_distribution(
+            body.amount, created_by="admin", distributed_for=target,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log.info("Lucky distribution by admin: %s", result)
+    return result
+
+
+@app.get("/api/lucky/distributions")
+async def api_lucky_distributions(_admin: str = Depends(require_admin), limit: int = 60):
+    return {"distributions": db.list_lucky_distributions(limit=limit)}
+
+
+@app.get("/api/lucky/admin/summary")
+async def api_lucky_admin_summary(_admin: str = Depends(require_admin)):
+    totals = db.lucky_totals()
+    latest = db.get_latest_lucky_distribution()
+    return {"totals": totals, "latest_distribution": latest}
 
 
 # ── 認証 ────────────────────────────────────────────────

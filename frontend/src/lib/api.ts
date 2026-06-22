@@ -3,6 +3,7 @@ import type {
   Member, Template, Approval, BulkJob, Paged, SentEmail, ReceivedEmail,
   Health, LoginResponse, MemberHistory, MemberPurchases,
   WithdrawsList, WithdrawStats, MemberWithdrawSummary,
+  LuckyDistribution, LuckyAdminSummary,
 } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
@@ -156,6 +157,20 @@ export const api = {
       ),
     stats: (source?: string) =>
       request<WithdrawStats>(`/api/withdraws/stats${source ? `?source=${encodeURIComponent(source)}` : ""}`),
+  },
+
+  lucky: {
+    summary: () => request<LuckyAdminSummary>("/api/lucky/admin/summary"),
+    distributions: (limit = 60) =>
+      request<{ distributions: LuckyDistribution[] }>(`/api/lucky/distributions?limit=${limit}`),
+    distribute: (amount: number, force = false, distributed_for?: string) =>
+      request<{
+        distribution_id: number; recipients: number; total_nft: number;
+        rate: number; pool_amount: number; distributed_total: number; distributed_for: string;
+      }>("/api/lucky/distribute", {
+        method: "POST",
+        body: JSON.stringify({ amount, force, distributed_for }),
+      }),
   },
 
   templates: {

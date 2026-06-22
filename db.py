@@ -144,6 +144,53 @@ CREATE INDEX IF NOT EXISTS idx_withdraws_external ON withdraw_requests(external_
 CREATE INDEX IF NOT EXISTS idx_bulk_targets_job_id ON bulk_job_targets(job_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bulk_targets_job_email_unique
     ON bulk_job_targets(job_id, recipient_email);
+
+-- ── ラッキーマスタード会員ポータル ──────────────────────
+-- 元サイト luckymustard.uk (恒久ダウン) の代替。会員は LUCKY_MUSTARD のみ閲覧。
+-- 報酬式: 入金額 = 保有NFT枚数 × (日次プール ÷ 総NFT枚数)
+CREATE TABLE IF NOT EXISTS lucky_members (
+    email TEXT PRIMARY KEY,             -- 小文字正規化したメール（ログインキー）
+    name TEXT,
+    lucky_user_id INTEGER,             -- 元 DB の users.id
+    nft_count INTEGER DEFAULT 0,       -- 報酬対象(ステーク)NFT枚数。日次報酬の按分基準
+    owned_nft INTEGER DEFAULT 0,       -- 累計購入枚数 (buy_nft 由来・参考値)
+    balance REAL DEFAULT 0,            -- 現在残高 (USDT)
+    cumulative_reward REAL DEFAULT 0,  -- 累計報酬 (USDT)
+    last_reward_at TEXT,
+    source TEXT DEFAULT 'dump',        -- 'dump'(移行) | 'manual'
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lucky_distributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id INTEGER UNIQUE,        -- 元 reward_distribution_histories.id（移行分の重複防止）。新規は NULL
+    nft TEXT DEFAULT 'LUCKY_MUSTARD',
+    distributed_for TEXT,             -- 対象日時 (JST, 元サイトの time 相当)
+    pool_amount REAL NOT NULL,        -- その回の総分配額 (USDT)
+    total_nft INTEGER NOT NULL,       -- 分配時の総 NFT 枚数
+    rate REAL,                        -- pool_amount / total_nft (1枚あたり)
+    recipients INTEGER DEFAULT 0,     -- 受取人数
+    status TEXT DEFAULT 'done',
+    created_by TEXT DEFAULT 'migration',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS lucky_rewards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id INTEGER UNIQUE,        -- 元 balance_change_history.id（移行分の重複防止）。新規は NULL
+    distribution_id INTEGER,          -- lucky_distributions.id（新規分配時に紐付け）
+    email TEXT NOT NULL,
+    nft_count INTEGER,                -- そのとき報酬対象だった枚数
+    amount REAL NOT NULL,             -- 入金額 (USDT)
+    balance_after REAL,               -- 取引後残高
+    rewarded_at TEXT,                 -- 日時 (JST ISO)
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_lucky_rewards_email ON lucky_rewards(email);
+CREATE INDEX IF NOT EXISTS idx_lucky_rewards_dist ON lucky_rewards(distribution_id);
+CREATE INDEX IF NOT EXISTS idx_lucky_rewards_at ON lucky_rewards(rewarded_at);
 """
 
 
@@ -179,6 +226,8 @@ def init_db() -> None:
         _ensure_column(conn, "bulk_send_jobs", "confirm_all", "confirm_all INTEGER DEFAULT 0")
         # 出金申請の取得元（既存行は nftportal 由来）
         _ensure_column(conn, "withdraw_requests", "source", "source TEXT DEFAULT 'nftportal'")
+        # ラッキー会員: 累計購入枚数（参考値）
+        _ensure_column(conn, "lucky_members", "owned_nft", "owned_nft INTEGER DEFAULT 0")
         try:
             conn.execute(
                 """CREATE UNIQUE INDEX IF NOT EXISTS idx_recv_message_id_unique
@@ -959,3 +1008,278 @@ def unnotified_withdraws() -> list[dict]:
             "SELECT * FROM withdraw_requests WHERE notified_at IS NULL ORDER BY requested_at ASC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+# ── ラッキーマスタード会員ポータル ──────────────────────
+def bulk_upsert_lucky_members(members: list[dict]) -> int:
+    """会員を一括 upsert（email キー）。移行・再集計用。件数を返す。"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """INSERT INTO lucky_members
+               (email, name, lucky_user_id, nft_count, owned_nft, balance, cumulative_reward,
+                last_reward_at, source, created_at, updated_at)
+               VALUES (:email, :name, :lucky_user_id, :nft_count, :owned_nft, :balance,
+                       :cumulative_reward, :last_reward_at, :source, :created_at, :updated_at)
+               ON CONFLICT(email) DO UPDATE SET
+                   name=excluded.name,
+                   lucky_user_id=excluded.lucky_user_id,
+                   nft_count=excluded.nft_count,
+                   owned_nft=excluded.owned_nft,
+                   balance=excluded.balance,
+                   cumulative_reward=excluded.cumulative_reward,
+                   last_reward_at=excluded.last_reward_at,
+                   source=excluded.source,
+                   updated_at=excluded.updated_at""",
+            [
+                {
+                    "email": (m.get("email") or "").strip().lower(),
+                    "name": m.get("name", ""),
+                    "lucky_user_id": m.get("lucky_user_id"),
+                    "nft_count": m.get("nft_count", 0),
+                    "owned_nft": m.get("owned_nft", 0),
+                    "balance": m.get("balance", 0),
+                    "cumulative_reward": m.get("cumulative_reward", 0),
+                    "last_reward_at": m.get("last_reward_at"),
+                    "source": m.get("source", "dump"),
+                    "created_at": m.get("created_at", now),
+                    "updated_at": now,
+                }
+                for m in members
+                if (m.get("email") or "").strip()
+            ],
+        )
+        return cur.rowcount
+
+
+def bulk_insert_lucky_distributions(rows: list[dict]) -> int:
+    """分配イベントを一括挿入（external_id で重複防止）。挿入件数を返す。"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """INSERT OR IGNORE INTO lucky_distributions
+               (external_id, nft, distributed_for, pool_amount, total_nft, rate,
+                recipients, status, created_by, created_at)
+               VALUES (:external_id, :nft, :distributed_for, :pool_amount, :total_nft,
+                       :rate, :recipients, :status, :created_by, :created_at)""",
+            [
+                {
+                    "external_id": r.get("external_id"),
+                    "nft": r.get("nft", "LUCKY_MUSTARD"),
+                    "distributed_for": r.get("distributed_for"),
+                    "pool_amount": r.get("pool_amount", 0),
+                    "total_nft": r.get("total_nft", 0),
+                    "rate": r.get("rate"),
+                    "recipients": r.get("recipients", 0),
+                    "status": r.get("status", "done"),
+                    "created_by": r.get("created_by", "migration"),
+                    "created_at": r.get("created_at", now),
+                }
+                for r in rows
+            ],
+        )
+        return cur.rowcount
+
+
+def bulk_insert_lucky_rewards(rows: list[dict], batch: int = 5000) -> int:
+    """報酬明細を一括挿入（external_id で重複防止）。挿入件数を返す。"""
+    now = datetime.now().isoformat()
+    inserted = 0
+    with get_conn() as conn:
+        for i in range(0, len(rows), batch):
+            chunk = rows[i:i + batch]
+            cur = conn.executemany(
+                """INSERT OR IGNORE INTO lucky_rewards
+                   (external_id, distribution_id, email, nft_count, amount,
+                    balance_after, rewarded_at, created_at)
+                   VALUES (:external_id, :distribution_id, :email, :nft_count, :amount,
+                           :balance_after, :rewarded_at, :created_at)""",
+                [
+                    {
+                        "external_id": r.get("external_id"),
+                        "distribution_id": r.get("distribution_id"),
+                        "email": (r.get("email") or "").strip().lower(),
+                        "nft_count": r.get("nft_count"),
+                        "amount": r.get("amount", 0),
+                        "balance_after": r.get("balance_after"),
+                        "rewarded_at": r.get("rewarded_at"),
+                        "created_at": r.get("created_at", now),
+                    }
+                    for r in chunk
+                    if (r.get("email") or "").strip()
+                ],
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
+def get_lucky_member(email: str) -> Optional[dict]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM lucky_members WHERE email = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_lucky_rewards(email: str, limit: int = 400) -> list[dict]:
+    """会員の報酬明細を新しい順に返す（履歴・グラフ用）。"""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT amount, nft_count, balance_after, rewarded_at
+               FROM lucky_rewards WHERE email = ?
+               ORDER BY rewarded_at DESC, id DESC LIMIT ?""",
+            (email.strip().lower(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_latest_lucky_distribution() -> Optional[dict]:
+    """最新の分配イベント（現在の単価・総NFT枚数の参照用）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT * FROM lucky_distributions
+               ORDER BY distributed_for DESC, id DESC LIMIT 1"""
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_lucky_distributions(limit: int = 60) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM lucky_distributions ORDER BY distributed_for DESC, id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def lucky_totals() -> dict:
+    """会員全体の集計（管理画面ダッシュボード用）。"""
+    with get_conn() as conn:
+        r = conn.execute(
+            """SELECT COUNT(*) AS members,
+                      COALESCE(SUM(nft_count), 0) AS total_nft,
+                      COALESCE(SUM(balance), 0) AS total_balance,
+                      COALESCE(SUM(cumulative_reward), 0) AS total_reward
+               FROM lucky_members WHERE nft_count > 0"""
+        ).fetchone()
+        return dict(r)
+
+
+def clear_lucky_tables() -> None:
+    """移行のやり直し用（lucky_* を全消去）。"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM lucky_rewards")
+        conn.execute("DELETE FROM lucky_distributions")
+        conn.execute("DELETE FROM lucky_members")
+
+
+def get_lucky_dashboard(email: str) -> Optional[dict]:
+    """会員ポータル用のダッシュボードデータ（タイル＋報酬推移＋履歴）。"""
+    member = get_lucky_member(email)
+    if not member:
+        return None
+    rewards = get_lucky_rewards(email, limit=400)  # 新しい順
+    latest = get_latest_lucky_distribution()
+    rate = (latest or {}).get("rate") or 0.0
+    nft = member.get("nft_count") or 0
+    today_reward = round(nft * rate, 2)
+    # グラフ用に古い順の系列（残高の推移＝報酬の積み上がり）
+    series = [
+        {
+            "date": (r["rewarded_at"] or "")[:10],
+            "amount": r["amount"],
+            "balance_after": r["balance_after"],
+        }
+        for r in reversed(rewards)
+    ]
+    return {
+        "email": member["email"],
+        "name": member.get("name"),
+        "nft_count": nft,
+        "owned_nft": member.get("owned_nft") or 0,
+        "balance": member.get("balance") or 0,
+        "cumulative_reward": member.get("cumulative_reward") or 0,
+        "today_reward": today_reward,
+        "rate": rate,
+        "last_reward_at": member.get("last_reward_at"),
+        "history": rewards[:120],
+        "series": series,
+    }
+
+
+def create_lucky_distribution(
+    pool_amount: float,
+    *,
+    created_by: str = "admin",
+    distributed_for: Optional[str] = None,
+    nft: str = "LUCKY_MUSTARD",
+) -> dict:
+    """日次報酬分配を DB 内でアトミックに実行する。
+
+    各会員へ amount = round(nft_count × pool_amount / total_nft, 2) を加算し、
+    lucky_distributions（1行）と lucky_rewards（会員ごと）を記録、lucky_members の
+    balance / cumulative_reward / last_reward_at を更新する。
+    """
+    now = datetime.now().isoformat()
+    distributed_for = distributed_for or now
+    with get_conn() as conn:
+        members = conn.execute(
+            "SELECT email, nft_count, balance, cumulative_reward FROM lucky_members WHERE nft_count > 0"
+        ).fetchall()
+        total_nft = sum((m["nft_count"] or 0) for m in members)
+        if total_nft <= 0:
+            raise ValueError("報酬対象 NFT が 0 のため分配できません")
+        rate = pool_amount / total_nft
+        cur = conn.execute(
+            """INSERT INTO lucky_distributions
+               (external_id, nft, distributed_for, pool_amount, total_nft, rate,
+                recipients, status, created_by, created_at)
+               VALUES (NULL, ?, ?, ?, ?, ?, ?, 'done', ?, ?)""",
+            (nft, distributed_for, pool_amount, total_nft, rate, len(members), created_by, now),
+        )
+        dist_id = cur.lastrowid
+        reward_params = []
+        member_updates = []
+        distributed_total = 0.0
+        for m in members:
+            cnt = m["nft_count"] or 0
+            amt = round(cnt * rate, 2)
+            new_bal = round((m["balance"] or 0) + amt, 2)
+            new_cum = round((m["cumulative_reward"] or 0) + amt, 2)
+            distributed_total += amt
+            reward_params.append((dist_id, m["email"], cnt, amt, new_bal, distributed_for, now))
+            member_updates.append((new_bal, new_cum, distributed_for, m["email"]))
+        conn.executemany(
+            """INSERT INTO lucky_rewards
+               (external_id, distribution_id, email, nft_count, amount, balance_after, rewarded_at, created_at)
+               VALUES (NULL, ?, ?, ?, ?, ?, ?, ?)""",
+            reward_params,
+        )
+        conn.executemany(
+            """UPDATE lucky_members
+               SET balance = ?, cumulative_reward = ?, last_reward_at = ?, updated_at = ?
+               WHERE email = ?""",
+            [(b, c, lr, now, e) for (b, c, lr, e) in member_updates],
+        )
+        return {
+            "distribution_id": dist_id,
+            "nft": nft,
+            "recipients": len(members),
+            "total_nft": total_nft,
+            "pool_amount": pool_amount,
+            "rate": rate,
+            "distributed_total": round(distributed_total, 2),
+            "distributed_for": distributed_for,
+        }
+
+
+def lucky_distribution_exists_for_date(date_str: str, nft: str = "LUCKY_MUSTARD") -> bool:
+    """指定日(YYYY-MM-DD)の分配が既にあるか（二重分配防止・backfill用）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT 1 FROM lucky_distributions
+               WHERE nft = ? AND substr(distributed_for, 1, 10) = ? LIMIT 1""",
+            (nft, date_str),
+        ).fetchone()
+        return row is not None
