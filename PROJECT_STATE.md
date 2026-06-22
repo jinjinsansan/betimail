@@ -1,6 +1,6 @@
 # Betimail プロジェクト状態ドキュメント
 
-**最終更新**: 2026-05-16 (**v1.1.0 リリース**)
+**最終更新**: 2026-06-22 (**v1.2.0 リリース** — ラッキーマスタード会員ポータル)
 **目的**: 新規 Claude セッションでも即座に状況を把握し、開発・運用を継続できるようにする
 
 > ⚠️ **v1.1.0 以降、本番運用モード**: `TEST_MODE=false` のため実会員にメールが届く状態です。テスト時は **送信先・件名・予約時刻** を必ず確認してから操作してください。
@@ -732,6 +732,7 @@ betimail/
 |---|---|---|
 | **v1.0.0** | 2026-05-15 | 初期リリース。4 種 NFT 保有者 1,066 名、買い取り出金監視、ユーザーセルフチェックページ含む |
 | **v1.1.0** | 2026-05-16 | **本番運用開始**。OTP・予約配信・エイリアス統合・JST 表示統一・ラッキー報酬の二重実行防止 |
+| **v1.2.0** | 2026-06-22 | **ラッキーマスタード会員ポータル**。元サイト恒久ダウンを受け betimail 内に会員ポータル＋管理＋日次分配を自前再構築（セクション 17 参照）|
 
 ---
 
@@ -1026,5 +1027,54 @@ with db.get_conn() as c:
 
 ---
 
+## 17. v1.2.0 ラッキーマスタード会員ポータル（**新セッションは必ず読む**）
+
+### 17.1 背景
+元サイト `luckymustard.uk`（Laravel製の会員制報酬プラットフォーム、OVH `15.235.163.72`）が **2026-06-10 頃から恒久ダウン**し復旧不能に。毎晩20時JSTの報酬分配（ステーカーへの按分）が停止した。会員のために **betimail 内へ会員ポータル＋管理＋日次分配を自前で再構築**した。仁氏から入手した本番 SQL ダンプ（`luckymustard_bitcasino`、MySQL5.7、62MB）を正本としてデータ移行。
+
+### 17.2 報酬ロジック（実データで検証済み・最重要）
+- 報酬入金は元台帳 `balance_change_history.type = **5007**` で記録。
+- **入金額 = 報酬対象NFT枚数 × (日次プール ÷ 総NFT枚数)**。
+- **報酬対象枚数 = ステーク枚数**（`staking_histories`）であり `buy_nft` の購入枚数ではない（会員別に乖離あり）。現在の対象は **393名 / 685枚**（最終分配日2026-06-10にアクティブだった会員のその日の枚数の合計＝公式 total_nft_stake と一致）。
+- 日次プールは時期で変動。立ち上げ期（2024-11〜2025-02）は $1,300〜1,850/日、段階的に低下し **2025-06頃から $352/日** で安定。累計分配は約 $360,197（575回, 2024-09-19〜2026-06-10）。
+
+### 17.3 構成
+- **DB（`db.py`）**: `lucky_members`（email/name/nft_count=報酬対象/owned_nft=購入/balance/cumulative_reward/source）・`lucky_distributions`・`lucky_rewards`。`create_lucky_distribution()` がDB内アトミック分配（`source='preview'` は分配・集計から除外）。
+- **会員ポータル `/lucky`**（`frontend/src/app/lucky/`）: メールOTPログイン→残高ヒーロー・4指標タイル・残高推移SVGチャート・報酬履歴。**ダークテーマ固定（黒×ゴールド、明朝＋ゴシック）**。API/トークンは `frontend/src/lib/lucky.ts`（管理者トークンと分離）。
+- **管理タブ「ラッキー報酬」**（`frontend/src/components/tabs/LuckyTab.tsx`）: 統計・手動分配（同日二重分配ガード=409＋force）・分配履歴。
+- **認証**: 会員=メールOTP（`/api/lucky/login`・`verify`・`me`、`auth.issue_member_token` scope=lucky）。管理=既存 Bearer。
+- **API**: `/api/lucky/login|verify|me`（会員）、`/api/lucky/distribute|distributions|admin/summary`（管理）。
+
+### 17.4 日次分配 cron（死んだサイトを叩かない）
+`tools/lucky_distribute.py`（DB内分配、`daily_lucky_reward.py` の代替）。`--backfill-from` で停止期間を補填、`--dry-run`/`--date`、Telegram通知、二重防止に `lucky_distribution_exists_for_date`。
+```cron
+0 20 * * * /usr/bin/docker exec -e LUCKY_LOG_DIR=/app/data/lucky_logs betimail \
+  python /app/tools/lucky_distribute.py --notify-telegram >> /opt/betimail/logs/lucky_distribute/cron.log 2>&1
+```
+※旧 `daily_lucky_reward.py` の cron 行は削除済み。
+
+### 17.5 データ移行（ETL）
+`tools/import_lucky_dump.py`:
+- `--dump <sql> --out <work.db>`: MySQLダンプを作業用SQLiteへ解析＋突合レポート。
+- `--into-betimail --betimail-db <path>`: 作業DB→betimail本番DBへ投入（`clear_lucky_tables` で初期化してから）。
+本番投入結果: 393名/685枚、報酬明細216,545件。SQLダンプはVPS `/opt/betimail/data/backup-luckymustard_-20260611010001.sql` に残置（PIIは私有VPSのみ、`data/*.sql` は gitignore）。
+
+### 17.6 ソフトローンチ（限定公開）
+`config.LUCKY_PORTAL_ALLOWED_EMAILS`（空=全員公開／非空=列挙アドレスのみログイン可）。現在 VPS `.env` に `LUCKY_PORTAL_ALLOWED_EMAILS=goldbenchan@gmail.com` を設定し**管理者限定公開**中。`goldbenchan@gmail.com` は `source='preview'` のダミー会員（実分配に影響なし）。
+**全会員へ公開**: `.env` の `LUCKY_PORTAL_ALLOWED_EMAILS=` を空にして `docker compose up -d --build betimail`。
+
+### 17.7 本番デプロイ手順（再掲）
+1. `git push origin main` → Vercel が `/lucky`＋管理タブを自動デプロイ。
+2. VPS: 本番DBバックアップ（`betimail.db.bak-prelucky` 取得済）→ `scp main.py db.py auth.py config.py tools/*.py` → `docker compose up -d --build betimail`（起動時マイグレーションで lucky_* 自動作成）。
+3. SQLダンプを `/opt/betimail/data/` へ scp → ETL → `lucky_distribute.py --backfill-from <停止翌日>` → cron登録。
+- ロールバック: `/opt/betimail/data/betimail.db.bak-prelucky` から復元。
+
+### 17.8 残作業 / 今後
+- **全会員への公開**（限定公開ゲートの解除）— 仁氏のタイミングで。
+- 会員へ `https://admin.betimail.uk/lucky` の周知（NFT購入時メールでログイン）。
+- 将来: 出金機能（当面不要のため未実装）、ラベル/デザイン微調整。
+
+---
+
 **運営: 仁氏 (`goldbenchan@gmail.com`)**
-**開発支援: Claude Opus 4.7 (Anthropic)**
+**開発支援: Claude Opus 4.7 (Anthropic) / v1.2.0 は Claude Opus 4.8**
