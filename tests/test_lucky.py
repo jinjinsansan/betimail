@@ -82,6 +82,30 @@ def test_lucky_distribute_requires_admin():
     assert r.status_code in (401, 503)
 
 
+def test_admin_distribute_double_guard(monkeypatch):
+    import importlib
+    import sys
+    monkeypatch.setenv("ADMIN_PASSWORD", "secret")
+    for m in ("config", "auth", "main"):
+        if m in sys.modules:
+            importlib.reload(sys.modules[m])
+    import db, auth, main
+    db.init_db()
+    _seed_member(db, "f@example.com", "F", nft=2)
+    token = auth.issue_token("admin")["token"]
+    h = {"Authorization": f"Bearer {token}"}
+    client = TestClient(main.app)
+    # 1回目: 成功
+    r1 = client.post("/api/lucky/distribute", json={"amount": 352}, headers=h)
+    assert r1.status_code == 200, r1.text
+    # 2回目(同日): 二重分配ガードで 409
+    r2 = client.post("/api/lucky/distribute", json={"amount": 352}, headers=h)
+    assert r2.status_code == 409
+    # force=true なら上書き実行できる
+    r3 = client.post("/api/lucky/distribute", json={"amount": 352, "force": True}, headers=h)
+    assert r3.status_code == 200, r3.text
+
+
 def test_cron_distribute_one_idempotent_and_dryrun():
     import db
     from tools import lucky_distribute as ld

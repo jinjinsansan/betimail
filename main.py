@@ -7,7 +7,7 @@ import secrets
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from email.utils import getaddresses
 from typing import Optional
 
@@ -281,6 +281,7 @@ class LuckyVerifyRequest(BaseModel):
 class LuckyDistributeRequest(BaseModel):
     amount: float = Field(gt=0, le=100000)
     distributed_for: Optional[str] = None
+    force: bool = False
 
 
 def _issue_lucky_otp(email: str) -> str:
@@ -384,10 +385,25 @@ async def api_lucky_distribute(
     body: LuckyDistributeRequest,
     _admin: str = Depends(require_admin),
 ):
-    """管理者: 日次報酬を全保有者へステーク枚数比例で分配する。"""
+    """管理者: 日次報酬を全保有者へステーク枚数比例で分配する。
+
+    同じ日に二重分配しないよう、対象日(JST)に既存があれば 409 を返す。
+    force=true で上書き実行できる。
+    """
+    if body.distributed_for:
+        target = body.distributed_for
+        date_str = target[:10]
+    else:
+        date_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+        target = f"{date_str} 20:00:00"
+    if not body.force and db.lucky_distribution_exists_for_date(date_str):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{date_str} は既に分配済みです。再度分配する場合は確認のうえ実行してください。",
+        )
     try:
         result = db.create_lucky_distribution(
-            body.amount, created_by="admin", distributed_for=body.distributed_for,
+            body.amount, created_by="admin", distributed_for=target,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
