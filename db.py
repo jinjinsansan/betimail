@@ -1161,7 +1161,8 @@ def lucky_totals() -> dict:
                       COALESCE(SUM(nft_count), 0) AS total_nft,
                       COALESCE(SUM(balance), 0) AS total_balance,
                       COALESCE(SUM(cumulative_reward), 0) AS total_reward
-               FROM lucky_members WHERE nft_count > 0"""
+               FROM lucky_members
+               WHERE nft_count > 0 AND COALESCE(source, '') != 'preview'"""
         ).fetchone()
         return dict(r)
 
@@ -1225,7 +1226,8 @@ def create_lucky_distribution(
     distributed_for = distributed_for or now
     with get_conn() as conn:
         members = conn.execute(
-            "SELECT email, nft_count, balance, cumulative_reward FROM lucky_members WHERE nft_count > 0"
+            """SELECT email, nft_count, balance, cumulative_reward FROM lucky_members
+               WHERE nft_count > 0 AND COALESCE(source, '') != 'preview'"""
         ).fetchall()
         total_nft = sum((m["nft_count"] or 0) for m in members)
         if total_nft <= 0:

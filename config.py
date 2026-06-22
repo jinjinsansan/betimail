@@ -37,6 +37,15 @@ PUBLIC_CHECK_EXPOSE_NFT_TYPES = os.getenv("PUBLIC_CHECK_EXPOSE_NFT_TYPES", "fals
 PUBLIC_CHECK_REQUIRE_OTP = os.getenv("PUBLIC_CHECK_REQUIRE_OTP", "false").lower() == "true"
 PUBLIC_CHECK_OTP_TTL_SECONDS = int(os.getenv("PUBLIC_CHECK_OTP_TTL_SECONDS", "600"))
 PUBLIC_CHECK_OTP_RESEND_SECONDS = int(os.getenv("PUBLIC_CHECK_OTP_RESEND_SECONDS", "60"))
+
+# ラッキーマスタード会員ポータル(/lucky)のアクセス制限。
+# 空     = 全会員に公開。
+# 非空   = カンマ区切りで列挙したアドレスのみログイン可（ソフトローンチ・管理者限定公開用）。
+_raw_lucky_allowed = os.getenv("LUCKY_PORTAL_ALLOWED_EMAILS", "")
+LUCKY_PORTAL_ALLOWED_EMAILS: set[str] = {
+    e.strip().lower() for e in _raw_lucky_allowed.split(",") if e.strip()
+}
+
 AI_KNOWLEDGE_PATH = os.getenv(
     "AI_KNOWLEDGE_PATH",
     os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),

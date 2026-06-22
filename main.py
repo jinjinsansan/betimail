@@ -40,6 +40,7 @@ from config import (
     PUBLIC_CHECK_EXPOSE_DETAILS, PUBLIC_CHECK_EXPOSE_NAME, PUBLIC_CHECK_EXPOSE_NFT_TYPES,
     PUBLIC_CHECK_REQUIRE_OTP, PUBLIC_CHECK_OTP_TTL_SECONDS, PUBLIC_CHECK_OTP_RESEND_SECONDS,
     RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_INBOUND_DOMAINS,
+    LUCKY_PORTAL_ALLOWED_EMAILS,
 )
 
 
@@ -284,6 +285,14 @@ class LuckyDistributeRequest(BaseModel):
     force: bool = False
 
 
+def _lucky_access_allowed(email: str) -> bool:
+    """ソフトローンチ用のアクセス制限。LUCKY_PORTAL_ALLOWED_EMAILS が空なら全員公開、
+    非空ならそのリストに含まれるアドレスのみ許可（管理者限定公開）。"""
+    if not LUCKY_PORTAL_ALLOWED_EMAILS:
+        return True
+    return email.strip().lower() in LUCKY_PORTAL_ALLOWED_EMAILS
+
+
 def _issue_lucky_otp(email: str) -> str:
     now_ts = time.time()
     with _lucky_otp_lock:
@@ -329,6 +338,9 @@ async def api_lucky_login(body: LuckyLoginRequest, request: Request):
     email = str(body.email).strip().lower()
     limit_public_check(request, email)
     await asyncio.sleep(0.2)
+    # ソフトローンチ中は許可リスト外を会員と同様に弾く（OTPも送らない）
+    if not _lucky_access_allowed(email):
+        return {"found": False}
     # 会員でなければコードを送らない（無関係な人へのメール送信を防止）
     if not db.get_lucky_member(email):
         return {"found": False}
@@ -362,6 +374,8 @@ async def api_lucky_verify(body: LuckyVerifyRequest, request: Request):
     email = str(body.email).strip().lower()
     limit_public_check(request, email)
     await asyncio.sleep(0.2)
+    if not _lucky_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
     if not _verify_lucky_otp(email, body.code):
         raise HTTPException(status_code=400, detail="コードが無効または期限切れです")
     dash = db.get_lucky_dashboard(email)
@@ -374,6 +388,8 @@ async def api_lucky_verify(body: LuckyVerifyRequest, request: Request):
 @app.get("/api/lucky/me")
 async def api_lucky_me(email: str = Depends(auth_mod.require_lucky_member)):
     """会員トークンで自分のダッシュボードを再取得。"""
+    if not _lucky_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
     dash = db.get_lucky_dashboard(email)
     if not dash:
         raise HTTPException(status_code=404, detail="会員情報が見つかりません")

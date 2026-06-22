@@ -82,6 +82,37 @@ def test_lucky_distribute_requires_admin():
     assert r.status_code in (401, 503)
 
 
+def test_preview_member_excluded_from_distribution():
+    import db
+    _seed_member(db, "real@example.com", "Real", nft=2)
+    db.bulk_upsert_lucky_members([{
+        "email": "preview@example.com", "name": "PV", "nft_count": 10, "owned_nft": 10,
+        "balance": 0.0, "cumulative_reward": 0.0, "source": "preview",
+    }])
+    res = db.create_lucky_distribution(200.0)
+    assert res["total_nft"] == 2          # preview の 10枚は按分母数に入らない
+    pv = db.get_lucky_member("preview@example.com")
+    assert pv["balance"] == 0.0           # preview 会員には加算されない
+    assert db.lucky_totals()["total_nft"] == 2
+
+
+def test_lucky_login_allowlist_blocks_non_listed(monkeypatch):
+    import importlib
+    import sys
+    monkeypatch.setenv("LUCKY_PORTAL_ALLOWED_EMAILS", "admin@example.com")
+    for m in ("config", "main"):
+        if m in sys.modules:
+            importlib.reload(sys.modules[m])
+    import db, main
+    db.init_db()
+    _seed_member(db, "blocked@example.com", "B", nft=1)  # 会員だが許可外
+    client = TestClient(main.app)
+    r = client.post("/api/lucky/login", json={"email": "blocked@example.com"})
+    assert r.json() == {"found": False}
+    r2 = client.post("/api/lucky/verify", json={"email": "blocked@example.com", "code": "123456"})
+    assert r2.status_code == 403
+
+
 def test_admin_distribute_double_guard(monkeypatch):
     import importlib
     import sys
