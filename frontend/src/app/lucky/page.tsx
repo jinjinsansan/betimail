@@ -227,7 +227,7 @@ function Dashboard({ dash }: { dash: LuckyDashboard }) {
         <div className={`${s.tile} ${s.tileAccent}`}>
           <div className={s.tileLabel}>✨ 本日の報酬</div>
           <div className={s.tileValue}><span className={s.usd}>${fmtUsdt(dash.today_reward)}</span></div>
-          <div className={s.tileFoot}>{dash.nft_count}枚 × ${fmtUsdt(dash.rate)}/枚</div>
+          <div className={s.tileFoot}>{dash.nft_count}枚 × ${dash.rate.toFixed(4)}/枚</div>
         </div>
         <div className={s.tile}>
           <div className={s.tileLabel}>📈 累計報酬</div>
