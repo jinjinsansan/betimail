@@ -1,0 +1,370 @@
+/* ラッキーマスタード会員ポータル — モバイル最優先・白基調・情報重視 (Design B) */
+
+.page {
+  --lk-bg: #f4f6f8;
+  --lk-card: #ffffff;
+  --lk-ink: #1c2533;
+  --lk-sub: #6b7686;
+  --lk-line: #e7ebf0;
+  --lk-accent: #e0a82e;        /* マスタード */
+  --lk-accent-deep: #b9831a;
+  --lk-green: #14916b;
+  --lk-shadow: 0 1px 2px rgba(20, 30, 50, .06), 0 6px 18px rgba(20, 30, 50, .05);
+
+  min-height: 100dvh;
+  background: var(--lk-bg);
+  color: var(--lk-ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN",
+    "Noto Sans JP", "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.shell {
+  width: 100%;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 0 16px calc(40px + env(safe-area-inset-bottom));
+}
+
+/* ── トップバー ── */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 520px;
+  margin: 0 auto;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--lk-bg) 86%, transparent);
+  backdrop-filter: saturate(160%) blur(8px);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brandMark {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 18px;
+  color: #3a2c05;
+  background: linear-gradient(140deg, #f3c659, var(--lk-accent));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .04);
+}
+.brandName {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.brandSub {
+  font-size: 11px;
+  color: var(--lk-sub);
+  letter-spacing: .02em;
+}
+.logout {
+  border: 1px solid var(--lk-line);
+  background: var(--lk-card);
+  color: var(--lk-sub);
+  font-size: 12px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.logout:active { transform: scale(.97); }
+
+/* ── ログイン ── */
+.loginWrap {
+  padding-top: 28px;
+}
+.hero {
+  text-align: center;
+  margin-bottom: 18px;
+}
+.heroIcon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 14px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  background: linear-gradient(140deg, #fbe7ad, #f3c659);
+  box-shadow: var(--lk-shadow);
+}
+.heroTitle {
+  font-size: 20px;
+  font-weight: 800;
+  margin: 0 0 6px;
+}
+.heroSub {
+  font-size: 13px;
+  color: var(--lk-sub);
+  line-height: 1.6;
+  margin: 0;
+}
+.card {
+  background: var(--lk-card);
+  border: 1px solid var(--lk-line);
+  border-radius: 16px;
+  box-shadow: var(--lk-shadow);
+  padding: 18px;
+}
+.label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--lk-sub);
+  margin-bottom: 7px;
+}
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 16px; /* iOS auto-zoom 防止 */
+  padding: 13px 14px;
+  border: 1px solid var(--lk-line);
+  border-radius: 12px;
+  background: #fbfcfd;
+  color: var(--lk-ink);
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+.input:focus {
+  border-color: var(--lk-accent);
+  box-shadow: 0 0 0 3px rgba(224, 168, 46, .16);
+}
+.codeInput {
+  text-align: center;
+  letter-spacing: .42em;
+  font-weight: 700;
+  font-size: 22px;
+}
+.hint {
+  font-size: 11.5px;
+  color: var(--lk-sub);
+  margin-top: 8px;
+  line-height: 1.5;
+}
+.btn {
+  width: 100%;
+  margin-top: 14px;
+  border: none;
+  border-radius: 12px;
+  padding: 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #3a2c05;
+  background: linear-gradient(140deg, #f3c659, var(--lk-accent));
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn:active { transform: scale(.99); }
+.btn:disabled { opacity: .6; cursor: default; }
+.btnGhost {
+  background: transparent;
+  color: var(--lk-sub);
+  border: 1px solid var(--lk-line);
+  margin-top: 10px;
+}
+.error {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  background: #fdecec;
+  color: #b3261e;
+  border: 1px solid #f6cfcc;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  margin-top: 12px;
+  line-height: 1.5;
+}
+.notice {
+  font-size: 12.5px;
+  color: var(--lk-sub);
+  background: #f0f6ff;
+  border: 1px solid #d8e6fb;
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  line-height: 1.55;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(58, 44, 5, .3);
+  border-top-color: #3a2c05;
+  border-radius: 50%;
+  animation: lkspin .7s linear infinite;
+}
+@keyframes lkspin { to { transform: rotate(360deg); } }
+
+/* ── ダッシュボード ── */
+.greeting {
+  padding: 6px 2px 14px;
+}
+.greetingName {
+  font-size: 19px;
+  font-weight: 800;
+}
+.greetingSub {
+  font-size: 12.5px;
+  color: var(--lk-sub);
+  margin-top: 2px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.tile {
+  background: var(--lk-card);
+  border: 1px solid var(--lk-line);
+  border-radius: 16px;
+  box-shadow: var(--lk-shadow);
+  padding: 14px 14px 15px;
+}
+.tileAccent {
+  background: linear-gradient(155deg, #fff9ec, #fdf1d4);
+  border-color: #f1dca0;
+}
+.tileLabel {
+  font-size: 11.5px;
+  color: var(--lk-sub);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.tileValue {
+  margin-top: 8px;
+  font-size: 23px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -.01em;
+}
+.tileUnit {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--lk-sub);
+  margin-left: 3px;
+}
+.tileFoot {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--lk-sub);
+}
+.usd { color: var(--lk-green); }
+
+.section {
+  margin-top: 20px;
+}
+.sectionHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding: 0 2px;
+}
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+.sectionMeta {
+  font-size: 11.5px;
+  color: var(--lk-sub);
+}
+
+.chartCard {
+  background: var(--lk-card);
+  border: 1px solid var(--lk-line);
+  border-radius: 16px;
+  box-shadow: var(--lk-shadow);
+  padding: 16px 14px 10px;
+}
+.chartSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.chartAxis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  color: var(--lk-sub);
+  margin-top: 4px;
+  padding: 0 2px;
+}
+.chartEmpty {
+  text-align: center;
+  color: var(--lk-sub);
+  font-size: 12.5px;
+  padding: 26px 0;
+}
+
+.histList {
+  background: var(--lk-card);
+  border: 1px solid var(--lk-line);
+  border-radius: 16px;
+  box-shadow: var(--lk-shadow);
+  overflow: hidden;
+}
+.histRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 15px;
+  border-bottom: 1px solid var(--lk-line);
+}
+.histRow:last-child { border-bottom: none; }
+.histDate {
+  font-size: 13px;
+  font-weight: 600;
+}
+.histSub {
+  font-size: 11px;
+  color: var(--lk-sub);
+  margin-top: 2px;
+}
+.histAmt {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--lk-green);
+}
+.histBal {
+  font-size: 11px;
+  color: var(--lk-sub);
+  text-align: right;
+  margin-top: 2px;
+}
+.histRight { text-align: right; }
+
+.foot {
+  text-align: center;
+  font-size: 11px;
+  color: var(--lk-sub);
+  margin-top: 26px;
+  line-height: 1.6;
+}
+
+/* 報酬がない会員向けの案内 */
+.zeroNote {
+  background: #fff9ec;
+  border: 1px solid #f1dca0;
+  border-radius: 14px;
+  padding: 16px;
+  font-size: 13px;
+  color: #6a5314;
+  line-height: 1.6;
+  margin-top: 16px;
+}
