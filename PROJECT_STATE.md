@@ -1070,9 +1070,19 @@ with db.get_conn() as c:
 - ロールバック: `/opt/betimail/data/betimail.db.bak-prelucky` から復元。
 
 ### 17.8 残作業 / 今後
-- **全会員への公開**（限定公開ゲートの解除）— 仁氏のタイミングで。
-- 会員へ `https://admin.betimail.uk/lucky` の周知（NFT購入時メールでログイン）。
+- ~~**全会員への公開**（限定公開ゲートの解除）~~ → **2026-06-22 公開済み**（`LUCKY_PORTAL_ALLOWED_EMAILS` は空 = 全会員ログイン可）
+- 会員へ `https://admin.betimail.uk/lucky` の周知 → **2026-07-13 告知予定**
 - 将来: 出金機能（当面不要のため未実装）、ラベル/デザイン微調整。
+
+### 17.9 AI 返信エージェントのポータル問合せ対応（2026-07-13）
+
+会員告知に伴うポータル関連問合せに AI が個別対応できるよう強化:
+
+- **`ai_knowledge.md` セクション9 追加**: ポータルの基本情報（URL/OTPログイン/表示内容/データ移行・補填済みの事実）、よくある問合せと回答方針（ログイン不可・枚数相違=購入vsステーク・金額相違・出金希望・元サイトの行方・スペシャル対象外）、個別データの取り扱い原則
+- **`ai.py`**: `_format_lucky_summary()` / `_build_lucky_block()` 追加。`generate_reply` / `regenerate_reply` に `lucky` 引数を追加し、送信者のポータル登録データ（報酬対象枚数・購入枚数・残高・累計報酬・直近日次報酬・最終入金日）をプロンプトに注入。ポータル未登録の beti 会員には「登録なし＝ログイン対象外、needs_human で取り次ぐ」の注記を注入
+- **`main.py`** (webhook) / **`telegram_bot.py`** (AI相談モード): `db.get_lucky_dashboard(sender_email)` を取得して AI に受け渡し
+- 回答方針: 金額はメール本文に書きすぎずポータルへ誘導 / 出金・将来の報酬は約束しない / 全件 Telegram 承認モードは維持（仁氏が最終確認）
+- テスト: `tests/test_ai_fallback.py` に7件追加（計72件パス）
 
 ---
 

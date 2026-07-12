@@ -188,6 +188,46 @@ def _format_purchase_summary(purchases: dict) -> str:
     return "\n".join(parts)
 
 
+def _format_lucky_summary(lucky: dict) -> str:
+    """db.get_lucky_dashboard() の結果を AI 向けテキストに整形。"""
+    nft = lucky.get("nft_count") or 0
+    owned = lucky.get("owned_nft") or 0
+    parts = [f"- 報酬対象NFT枚数（ステーキング済み・ポータル表示値）: {nft} 枚"]
+    if owned and owned != nft:
+        parts.append(
+            f"- 累計購入枚数（参考）: {owned} 枚"
+            " ※ポータルにはステーク済み枚数のみ表示されるため、枚数の相違を問われたらこの差を説明"
+        )
+    parts.append(f"- 現在残高: {(lucky.get('balance') or 0):,.2f} USDT")
+    parts.append(f"- 累計報酬: {(lucky.get('cumulative_reward') or 0):,.2f} USDT")
+    today = lucky.get("today_reward") or 0
+    if today:
+        parts.append(f"- 直近の日次報酬: {today:.2f} USDT/日")
+    last = lucky.get("last_reward_at")
+    if last:
+        parts.append(f"- 最終報酬入金日: {str(last)[:10]}")
+    return "\n".join(parts)
+
+
+def _build_lucky_block(lucky: Optional[dict], is_member: bool) -> str:
+    """ラッキーマスタード会員ポータルの登録状況ブロックを組み立てる。"""
+    if lucky:
+        return (
+            "\n\n■ このメンバー様のラッキーマスタード会員ポータル登録データ:\n"
+            f"{_format_lucky_summary(lucky)}\n"
+            "（この方はポータル https://admin.betimail.uk/lucky にログイン可能な登録会員です。"
+            "具体的な金額は本文に書きすぎず、ポータルでの確認へ誘導してください）\n"
+        )
+    if is_member:
+        return (
+            "\n\n■ ラッキーマスタード会員ポータル: この方はポータルの報酬対象会員として"
+            "登録されていません（ポータルへのログイン対象外）。\n"
+            "本人がラッキーマスタードNFTの保有やポータル利用を主張する場合は、"
+            "別アドレスでの登録の可能性を案内しつつ、必ず needs_human=true で運営に取り次いでください。\n"
+        )
+    return ""
+
+
 def generate_reply(
     sender_name: str,
     sender_email: str,
@@ -197,6 +237,7 @@ def generate_reply(
     history: Optional[list[dict]] = None,
     purchases: Optional[dict] = None,
     is_member: bool = True,
+    lucky: Optional[dict] = None,
 ) -> dict:
     """AI返信生成。{reply, confidence, needs_human, reason} を返す。"""
     if client is None:
@@ -212,6 +253,7 @@ def generate_reply(
     purchase_block = ""
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴（DB記録）:\n{_format_purchase_summary(purchases)}\n"
+    lucky_block = _build_lucky_block(lucky, is_member)
 
     if is_member:
         guidance = """このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
@@ -247,7 +289,7 @@ submit_reply の confidence は 0.5 以下、needs_human は **必ず true** に
 送信者名: {sender_name or "不明"}
 送信者メールアドレス: {sender_email}
 保有 NFT 種別: {nft_type or "不明"}
-登録状況: {'beti 登録メンバー' if is_member else '⚠️ 登録未確認（DBに該当なし）'}{purchase_block}
+登録状況: {'beti 登録メンバー' if is_member else '⚠️ 登録未確認（DBに該当なし）'}{purchase_block}{lucky_block}
 
 件名: {original_subject or "(件名なし)"}
 
@@ -352,6 +394,7 @@ def regenerate_reply(
     nft_type: str = "不明",
     purchases: Optional[dict] = None,
     is_member: bool = True,
+    lucky: Optional[dict] = None,
 ) -> dict:
     """前回の下書きに対する仁氏からの修正指示を受けて、AI が下書きを再生成する。
 
@@ -368,6 +411,7 @@ def regenerate_reply(
     purchase_block = ""
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴:\n{_format_purchase_summary(purchases)}\n"
+    lucky_block = _build_lucky_block(lucky, is_member)
 
     member_status = "beti 登録メンバー" if is_member else "⚠️ 登録未確認（DBに該当なし）"
 
@@ -376,7 +420,7 @@ def regenerate_reply(
 【元の受信メール】
 送信者: {sender_name or "不明"} <{sender_email}>
 登録状況: {member_status}
-保有 NFT 種別: {nft_type or "不明"}{purchase_block}
+保有 NFT 種別: {nft_type or "不明"}{purchase_block}{lucky_block}
 件名: {original_subject or "(件名なし)"}
 
 本文:
