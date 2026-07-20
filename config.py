@@ -46,6 +46,12 @@ LUCKY_PORTAL_ALLOWED_EMAILS: set[str] = {
     e.strip().lower() for e in _raw_lucky_allowed.split(",") if e.strip()
 }
 
+# ポータル(/portal betiダッシュボード再構築)のアクセス制限。lucky と同方式。
+_raw_portal_allowed = os.getenv("PORTAL_ALLOWED_EMAILS", "")
+PORTAL_ALLOWED_EMAILS: set[str] = {
+    e.strip().lower() for e in _raw_portal_allowed.split(",") if e.strip()
+}
+
 AI_KNOWLEDGE_PATH = os.getenv(
     "AI_KNOWLEDGE_PATH",
     os.path.join(os.path.dirname(__file__), "ai_knowledge.md"),

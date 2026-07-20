@@ -191,6 +191,105 @@ CREATE TABLE IF NOT EXISTS lucky_rewards (
 CREATE INDEX IF NOT EXISTS idx_lucky_rewards_email ON lucky_rewards(email);
 CREATE INDEX IF NOT EXISTS idx_lucky_rewards_dist ON lucky_rewards(distribution_id);
 CREATE INDEX IF NOT EXISTS idx_lucky_rewards_at ON lucky_rewards(rewarded_at);
+
+-- ── ポータル（betiダッシュボード）再構築 ─────────────────
+-- 旧 nftportal 系サイトの代替。dashboard_20260715.sql を正本として移行。
+-- 残高は旧ポータルと完全一致が要件（user_point_setting.balance をそのまま採用）。
+-- 分配は管理画面からの手動実行のみ（ステーク口数に均等割り）。
+CREATE TABLE IF NOT EXISTS portal_members (
+    email TEXT PRIMARY KEY,             -- 小文字正規化したメール（ログインキー）
+    name TEXT,
+    portal_user_id INTEGER,            -- 元 DB の users.id
+    wallet_address TEXT,               -- 出金先の初期値（会員が申請時に更新可）
+    balance REAL DEFAULT 0,            -- 現在残高 (USDT)。旧ポータルから引き継ぎ + 新分配で加算 / 出金 paid で減算
+    cumulative_reward REAL DEFAULT 0,  -- 累計報酬 (USDT)
+    source TEXT DEFAULT 'dump',        -- 'dump'(移行) | 'preview'(動作確認用・分配/集計から除外)
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS portal_assets (
+    -- 1会員×1NFT種別=1行。nft_type は元 DB の enum (MEMBER/HOIHOI/SPECIAL_MUSTARD/...)
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    nft_type TEXT NOT NULL,
+    purchased_units INTEGER DEFAULT 0,  -- buy_nft 合計
+    staked_units INTEGER DEFAULT 0,     -- 有効ステーク口数 = 分配対象
+    transferred_in INTEGER DEFAULT 0,   -- transfer 受領
+    transferred_out INTEGER DEFAULT 0,  -- transfer 送付
+    updated_at TEXT,
+    UNIQUE(email, nft_type)
+);
+
+CREATE TABLE IF NOT EXISTS portal_distributions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nft_type TEXT NOT NULL,            -- 'MEMBER' | 'HOIHOI'
+    total_amount REAL NOT NULL,        -- 投入した総額 (USDT)
+    total_units INTEGER NOT NULL,      -- 実行時点の対象ステーク総口数
+    rate REAL,                         -- total_amount / total_units
+    recipients INTEGER DEFAULT 0,
+    note TEXT,
+    created_by TEXT DEFAULT 'admin',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS portal_rewards (
+    -- 報酬明細。移行分 = 旧 commission_histories (external_id 付き)。
+    -- 新規分配分 = distribution_id 付き（lucky_rewards と同じ流儀）。
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    external_id INTEGER UNIQUE,        -- 旧 commission_histories.id（移行分の重複防止）。新規は NULL
+    distribution_id INTEGER,           -- portal_distributions.id（新規分配時に紐付け）
+    email TEXT NOT NULL,
+    nft_type TEXT,
+    amount REAL NOT NULL,
+    units INTEGER,                     -- そのとき分配対象だったステーク口数
+    balance_after REAL,
+    rewarded_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS portal_staking_events (
+    -- 新ポータル上のステークボタン操作記録（解除は無し）
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    nft_type TEXT NOT NULL,
+    units INTEGER NOT NULL,
+    staked_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS buyback_requests (
+    -- パチスロホイホイ買い取りの意思表示（不可逆）。1会員×1NFT種別=1回のみ
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    nft_type TEXT NOT NULL DEFAULT 'HOIHOI',
+    units INTEGER,                     -- 確定時点の保有口数（記録用）
+    status TEXT DEFAULT 'pending',     -- pending / confirmed / processing / paid / rejected
+    note TEXT,
+    requested_at TEXT NOT NULL,
+    action_at TEXT,
+    notified_at TEXT,
+    UNIQUE(email, nft_type)
+);
+
+CREATE TABLE IF NOT EXISTS portal_withdrawals (
+    -- ポータル残高の出金申請（会員入力: ウォレットアドレス + 金額。一部出金可）
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    amount REAL NOT NULL,
+    destination TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',     -- pending / processing / paid / rejected / cancelled
+    note TEXT,
+    requested_at TEXT NOT NULL,
+    action_at TEXT,
+    notified_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_portal_assets_email ON portal_assets(email);
+CREATE INDEX IF NOT EXISTS idx_portal_rewards_email ON portal_rewards(email);
+CREATE INDEX IF NOT EXISTS idx_portal_rewards_dist ON portal_rewards(distribution_id);
+CREATE INDEX IF NOT EXISTS idx_portal_buyback_email ON buyback_requests(email);
+CREATE INDEX IF NOT EXISTS idx_portal_wd_email ON portal_withdrawals(email);
+CREATE INDEX IF NOT EXISTS idx_portal_wd_status ON portal_withdrawals(status);
 """
 
 
@@ -1285,3 +1384,591 @@ def lucky_distribution_exists_for_date(date_str: str, nft: str = "LUCKY_MUSTARD"
             (nft, date_str),
         ).fetchone()
         return row is not None
+
+
+# ── ポータル（betiダッシュボード）再構築 ─────────────────
+
+PORTAL_DISTRIBUTABLE_NFTS = ("MEMBER", "HOIHOI")
+
+
+def clear_portal_tables() -> None:
+    """移行のやり直し用（portal_* を全消去。買い取り/出金申請は運用データのため残す）。"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM portal_rewards")
+        conn.execute("DELETE FROM portal_distributions")
+        conn.execute("DELETE FROM portal_assets")
+        conn.execute("DELETE FROM portal_members")
+
+
+def bulk_upsert_portal_members(members: list[dict]) -> int:
+    """会員を一括 upsert（email キー）。移行・再集計用。"""
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """INSERT INTO portal_members
+               (email, name, portal_user_id, wallet_address, balance, cumulative_reward,
+                source, created_at, updated_at)
+               VALUES (:email, :name, :portal_user_id, :wallet_address, :balance,
+                       :cumulative_reward, :source, :created_at, :updated_at)
+               ON CONFLICT(email) DO UPDATE SET
+                   name=excluded.name,
+                   portal_user_id=excluded.portal_user_id,
+                   wallet_address=excluded.wallet_address,
+                   balance=excluded.balance,
+                   cumulative_reward=excluded.cumulative_reward,
+                   source=excluded.source,
+                   updated_at=excluded.updated_at""",
+            [
+                {
+                    "email": (m.get("email") or "").strip().lower(),
+                    "name": m.get("name", ""),
+                    "portal_user_id": m.get("portal_user_id"),
+                    "wallet_address": m.get("wallet_address"),
+                    "balance": m.get("balance", 0),
+                    "cumulative_reward": m.get("cumulative_reward", 0),
+                    "source": m.get("source", "dump"),
+                    "created_at": m.get("created_at", now),
+                    "updated_at": now,
+                }
+                for m in members
+                if (m.get("email") or "").strip()
+            ],
+        )
+        return cur.rowcount
+
+
+def bulk_upsert_portal_assets(rows: list[dict]) -> int:
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """INSERT INTO portal_assets
+               (email, nft_type, purchased_units, staked_units, transferred_in,
+                transferred_out, updated_at)
+               VALUES (:email, :nft_type, :purchased_units, :staked_units,
+                       :transferred_in, :transferred_out, :updated_at)
+               ON CONFLICT(email, nft_type) DO UPDATE SET
+                   purchased_units=excluded.purchased_units,
+                   staked_units=excluded.staked_units,
+                   transferred_in=excluded.transferred_in,
+                   transferred_out=excluded.transferred_out,
+                   updated_at=excluded.updated_at""",
+            [
+                {
+                    "email": (r.get("email") or "").strip().lower(),
+                    "nft_type": r.get("nft_type"),
+                    "purchased_units": r.get("purchased_units", 0),
+                    "staked_units": r.get("staked_units", 0),
+                    "transferred_in": r.get("transferred_in", 0),
+                    "transferred_out": r.get("transferred_out", 0),
+                    "updated_at": now,
+                }
+                for r in rows
+                if (r.get("email") or "").strip() and r.get("nft_type")
+            ],
+        )
+        return cur.rowcount
+
+
+def bulk_insert_portal_rewards(rows: list[dict], batch: int = 5000) -> int:
+    """報酬明細を一括挿入（external_id で重複防止）。挿入件数を返す。"""
+    now = datetime.now().isoformat()
+    inserted = 0
+    with get_conn() as conn:
+        for i in range(0, len(rows), batch):
+            chunk = rows[i:i + batch]
+            cur = conn.executemany(
+                """INSERT OR IGNORE INTO portal_rewards
+                   (external_id, distribution_id, email, nft_type, amount, units,
+                    balance_after, rewarded_at, created_at)
+                   VALUES (:external_id, :distribution_id, :email, :nft_type, :amount,
+                           :units, :balance_after, :rewarded_at, :created_at)""",
+                [
+                    {
+                        "external_id": r.get("external_id"),
+                        "distribution_id": r.get("distribution_id"),
+                        "email": (r.get("email") or "").strip().lower(),
+                        "nft_type": r.get("nft_type"),
+                        "amount": r.get("amount", 0),
+                        "units": r.get("units"),
+                        "balance_after": r.get("balance_after"),
+                        "rewarded_at": r.get("rewarded_at"),
+                        "created_at": r.get("created_at", now),
+                    }
+                    for r in chunk
+                    if (r.get("email") or "").strip()
+                ],
+            )
+            inserted += cur.rowcount
+    return inserted
+
+
+def get_portal_member(email: str) -> Optional[dict]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM portal_members WHERE email = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_portal_assets(email: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT nft_type, purchased_units, staked_units, transferred_in, transferred_out
+               FROM portal_assets WHERE email = ? ORDER BY nft_type""",
+            (email.strip().lower(),),
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["unstaked_units"] = max(
+            0,
+            (d["purchased_units"] or 0) + (d["transferred_in"] or 0)
+            - (d["transferred_out"] or 0) - (d["staked_units"] or 0),
+        )
+        out.append(d)
+    return out
+
+
+def get_portal_rewards(email: str, limit: int = 400) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT nft_type, amount, units, balance_after, rewarded_at
+               FROM portal_rewards WHERE email = ?
+               ORDER BY rewarded_at DESC, id DESC LIMIT ?""",
+            (email.strip().lower(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_portal_buybacks(email: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, nft_type, units, status, requested_at, action_at
+               FROM buyback_requests WHERE email = ? ORDER BY id""",
+            (email.strip().lower(),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_portal_withdrawals(email: str, limit: int = 100) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, amount, destination, status, requested_at, action_at
+               FROM portal_withdrawals WHERE email = ?
+               ORDER BY id DESC LIMIT ?""",
+            (email.strip().lower(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_portal_dashboard(email: str) -> Optional[dict]:
+    """会員ポータル用のダッシュボードデータ一式。"""
+    member = get_portal_member(email)
+    if not member:
+        return None
+    rewards = get_portal_rewards(email, limit=400)
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT external_id, amount_usdt, destination, status, requested_at, action_at
+               FROM withdraw_requests WHERE email = ?
+               ORDER BY requested_at DESC LIMIT 50""",
+            (email.strip().lower(),),
+        ).fetchall()
+        legacy_withdraws = [dict(r) for r in rows]
+    return {
+        "email": member["email"],
+        "name": member.get("name"),
+        "wallet_address": member.get("wallet_address"),
+        "balance": member.get("balance") or 0,
+        "cumulative_reward": member.get("cumulative_reward") or 0,
+        "assets": get_portal_assets(email),
+        "buybacks": get_portal_buybacks(email),
+        "withdrawals": get_portal_withdrawals(email),
+        "legacy_withdrawals": legacy_withdraws,
+        "history": rewards[:120],
+    }
+
+
+def portal_totals() -> dict:
+    """管理画面用の全体集計。"""
+    with get_conn() as conn:
+        m = conn.execute(
+            """SELECT COUNT(*) AS members,
+                      COALESCE(SUM(balance), 0) AS total_balance,
+                      COALESCE(SUM(cumulative_reward), 0) AS total_reward
+               FROM portal_members WHERE COALESCE(source, '') != 'preview'"""
+        ).fetchone()
+        assets = conn.execute(
+            """SELECT a.nft_type,
+                      COUNT(*) AS holders,
+                      COALESCE(SUM(a.purchased_units), 0) AS purchased_units,
+                      COALESCE(SUM(a.staked_units), 0) AS staked_units
+               FROM portal_assets a
+               JOIN portal_members pm ON pm.email = a.email
+               WHERE COALESCE(pm.source, '') != 'preview'
+               GROUP BY a.nft_type"""
+        ).fetchall()
+        bb = conn.execute(
+            "SELECT status, COUNT(*) c FROM buyback_requests GROUP BY status"
+        ).fetchall()
+        wd = conn.execute(
+            "SELECT status, COUNT(*) c, COALESCE(SUM(amount),0) s FROM portal_withdrawals GROUP BY status"
+        ).fetchall()
+        return {
+            **dict(m),
+            "assets": [dict(r) for r in assets],
+            "buybacks_by_status": {r["status"]: r["c"] for r in bb},
+            "withdrawals_by_status": {r["status"]: {"count": r["c"], "amount": r["s"]} for r in wd},
+        }
+
+
+def search_portal_members(query: str = "", limit: int = 50) -> list[dict]:
+    q = f"%{(query or '').strip().lower()}%"
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT email, name, balance, cumulative_reward, source
+               FROM portal_members
+               WHERE email LIKE ? OR lower(COALESCE(name,'')) LIKE ?
+               ORDER BY email LIMIT ?""",
+            (q, q, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_portal_distribution(
+    nft_type: str,
+    total_amount: float,
+    *,
+    note: str = "",
+    created_by: str = "admin",
+) -> dict:
+    """買い取り原資の手動分配を DB 内でアトミックに実行する。
+
+    対象: 指定 NFT の staked_units > 0 の会員（preview 除外）。
+    各会員へ amount = round(staked_units × total_amount / total_units, 2) を残高に加算。
+    """
+    if nft_type not in PORTAL_DISTRIBUTABLE_NFTS:
+        raise ValueError(f"分配対象外の NFT です: {nft_type}")
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        members = conn.execute(
+            """SELECT a.email, a.staked_units, pm.balance, pm.cumulative_reward
+               FROM portal_assets a
+               JOIN portal_members pm ON pm.email = a.email
+               WHERE a.nft_type = ? AND a.staked_units > 0
+                 AND COALESCE(pm.source, '') != 'preview'""",
+            (nft_type,),
+        ).fetchall()
+        total_units = sum((m["staked_units"] or 0) for m in members)
+        if total_units <= 0:
+            raise ValueError("分配対象のステーク口数が 0 のため分配できません")
+        rate = total_amount / total_units
+        cur = conn.execute(
+            """INSERT INTO portal_distributions
+               (nft_type, total_amount, total_units, rate, recipients, note, created_by, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (nft_type, total_amount, total_units, rate, len(members), note, created_by, now),
+        )
+        dist_id = cur.lastrowid
+        reward_params = []
+        member_updates = []
+        distributed_total = 0.0
+        for m in members:
+            units = m["staked_units"] or 0
+            amt = round(units * rate, 2)
+            new_bal = round((m["balance"] or 0) + amt, 2)
+            new_cum = round((m["cumulative_reward"] or 0) + amt, 2)
+            distributed_total += amt
+            reward_params.append((dist_id, m["email"], nft_type, amt, units, new_bal, now, now))
+            member_updates.append((new_bal, new_cum, now, m["email"]))
+        conn.executemany(
+            """INSERT INTO portal_rewards
+               (external_id, distribution_id, email, nft_type, amount, units,
+                balance_after, rewarded_at, created_at)
+               VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            reward_params,
+        )
+        conn.executemany(
+            """UPDATE portal_members
+               SET balance = ?, cumulative_reward = ?, updated_at = ?
+               WHERE email = ?""",
+            member_updates,
+        )
+        return {
+            "distribution_id": dist_id,
+            "nft_type": nft_type,
+            "recipients": len(members),
+            "total_units": total_units,
+            "total_amount": total_amount,
+            "rate": rate,
+            "distributed_total": round(distributed_total, 2),
+        }
+
+
+def preview_portal_distribution(nft_type: str, total_amount: float) -> dict:
+    """分配実行前のプレビュー（対象人数・総口数・1口あたり額）。"""
+    if nft_type not in PORTAL_DISTRIBUTABLE_NFTS:
+        raise ValueError(f"分配対象外の NFT です: {nft_type}")
+    with get_conn() as conn:
+        r = conn.execute(
+            """SELECT COUNT(*) AS recipients, COALESCE(SUM(a.staked_units), 0) AS total_units
+               FROM portal_assets a
+               JOIN portal_members pm ON pm.email = a.email
+               WHERE a.nft_type = ? AND a.staked_units > 0
+                 AND COALESCE(pm.source, '') != 'preview'""",
+            (nft_type,),
+        ).fetchone()
+        total_units = r["total_units"] or 0
+        return {
+            "nft_type": nft_type,
+            "total_amount": total_amount,
+            "recipients": r["recipients"],
+            "total_units": total_units,
+            "rate": (total_amount / total_units) if total_units else None,
+        }
+
+
+def portal_distribution_exists_for_date(date_str: str, nft_type: str) -> bool:
+    """指定日(YYYY-MM-DD)に同種別の分配が既にあるか（誤操作の二重実行防止）。"""
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT 1 FROM portal_distributions
+               WHERE nft_type = ? AND substr(created_at, 1, 10) = ? LIMIT 1""",
+            (nft_type, date_str),
+        ).fetchone()
+        return row is not None
+
+
+def list_portal_distributions(limit: int = 60) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM portal_distributions ORDER BY id DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def stake_portal_units(email: str, nft_type: str) -> dict:
+    """未ステーク口数を全量ステークする（ステークボタン。解除は無し）。"""
+    email = email.strip().lower()
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        row = conn.execute(
+            """SELECT purchased_units, staked_units, transferred_in, transferred_out
+               FROM portal_assets WHERE email = ? AND nft_type = ?""",
+            (email, nft_type),
+        ).fetchone()
+        if not row:
+            raise ValueError("この NFT の保有記録がありません")
+        unstaked = max(
+            0,
+            (row["purchased_units"] or 0) + (row["transferred_in"] or 0)
+            - (row["transferred_out"] or 0) - (row["staked_units"] or 0),
+        )
+        if unstaked <= 0:
+            raise ValueError("ステーク可能な口数がありません")
+        conn.execute(
+            """UPDATE portal_assets SET staked_units = staked_units + ?, updated_at = ?
+               WHERE email = ? AND nft_type = ?""",
+            (unstaked, now, email, nft_type),
+        )
+        conn.execute(
+            """INSERT INTO portal_staking_events (email, nft_type, units, staked_at)
+               VALUES (?, ?, ?, ?)""",
+            (email, nft_type, unstaked, now),
+        )
+        new_staked = (row["staked_units"] or 0) + unstaked
+        return {"email": email, "nft_type": nft_type, "staked": unstaked, "staked_units": new_staked}
+
+
+def create_buyback_request(email: str, nft_type: str = "HOIHOI") -> dict:
+    """買い取りの意思表示を記録する（不可逆・1会員1回）。既に申請済みなら ValueError。"""
+    email = email.strip().lower()
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        existing = conn.execute(
+            "SELECT id, status FROM buyback_requests WHERE email = ? AND nft_type = ?",
+            (email, nft_type),
+        ).fetchone()
+        if existing:
+            raise ValueError("既に買い取りを申請済みです")
+        asset = conn.execute(
+            """SELECT purchased_units, staked_units, transferred_in, transferred_out
+               FROM portal_assets WHERE email = ? AND nft_type = ?""",
+            (email, nft_type),
+        ).fetchone()
+        if not asset:
+            raise ValueError("この NFT の保有記録がありません")
+        units = max(
+            (asset["purchased_units"] or 0) + (asset["transferred_in"] or 0)
+            - (asset["transferred_out"] or 0),
+            asset["staked_units"] or 0,
+        )
+        cur = conn.execute(
+            """INSERT INTO buyback_requests (email, nft_type, units, status, requested_at)
+               VALUES (?, ?, ?, 'pending', ?)""",
+            (email, nft_type, units, now),
+        )
+        return {"id": cur.lastrowid, "email": email, "nft_type": nft_type,
+                "units": units, "status": "pending", "requested_at": now}
+
+
+def list_buyback_requests(status: str = "", limit: int = 200) -> list[dict]:
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                """SELECT b.*, pm.name FROM buyback_requests b
+                   LEFT JOIN portal_members pm ON pm.email = b.email
+                   WHERE b.status = ? ORDER BY b.id DESC LIMIT ?""",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT b.*, pm.name FROM buyback_requests b
+                   LEFT JOIN portal_members pm ON pm.email = b.email
+                   ORDER BY b.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_buyback_status(request_id: int, status: str, note: Optional[str] = None) -> bool:
+    if status not in ("pending", "confirmed", "processing", "paid", "rejected"):
+        raise ValueError(f"不正なステータス: {status}")
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        if note is None:
+            cur = conn.execute(
+                "UPDATE buyback_requests SET status = ?, action_at = ? WHERE id = ?",
+                (status, now, request_id),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE buyback_requests SET status = ?, note = ?, action_at = ? WHERE id = ?",
+                (status, note, now, request_id),
+            )
+        return cur.rowcount > 0
+
+
+def mark_buyback_notified(request_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE buyback_requests SET notified_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), request_id),
+        )
+
+
+def create_portal_withdrawal(email: str, amount: float, destination: str) -> dict:
+    """出金申請（一部金額指定可）。残高 - pending/processing 合計 >= amount を検証。
+
+    申請時は残高を減らさない。paid 確定時に減算する。
+    """
+    email = email.strip().lower()
+    if amount <= 0:
+        raise ValueError("金額は 0 より大きい必要があります")
+    destination = (destination or "").strip()
+    if not destination or len(destination) < 10:
+        raise ValueError("ウォレットアドレスを正しく入力してください")
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        m = conn.execute(
+            "SELECT balance FROM portal_members WHERE email = ?", (email,)
+        ).fetchone()
+        if not m:
+            raise ValueError("会員情報が見つかりません")
+        pending = conn.execute(
+            """SELECT COALESCE(SUM(amount), 0) FROM portal_withdrawals
+               WHERE email = ? AND status IN ('pending', 'processing')""",
+            (email,),
+        ).fetchone()[0]
+        available = round((m["balance"] or 0) - pending, 2)
+        if round(amount, 2) > available:
+            raise ValueError(f"出金可能額を超えています（申請可能額: {available:.2f} USDT）")
+        cur = conn.execute(
+            """INSERT INTO portal_withdrawals (email, amount, destination, status, requested_at)
+               VALUES (?, ?, ?, 'pending', ?)""",
+            (email, round(amount, 2), destination, now),
+        )
+        conn.execute(
+            "UPDATE portal_members SET wallet_address = ?, updated_at = ? WHERE email = ?",
+            (destination, now, email),
+        )
+        return {"id": cur.lastrowid, "email": email, "amount": round(amount, 2),
+                "destination": destination, "status": "pending", "requested_at": now}
+
+
+def cancel_portal_withdrawal(withdrawal_id: int, email: str) -> bool:
+    """会員自身による取り下げ（pending のみ）。"""
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE portal_withdrawals SET status = 'cancelled', action_at = ?
+               WHERE id = ? AND email = ? AND status = 'pending'""",
+            (datetime.now().isoformat(), withdrawal_id, email.strip().lower()),
+        )
+        return cur.rowcount > 0
+
+
+def list_portal_withdrawals(status: str = "", limit: int = 200) -> list[dict]:
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                """SELECT w.*, pm.name FROM portal_withdrawals w
+                   LEFT JOIN portal_members pm ON pm.email = w.email
+                   WHERE w.status = ? ORDER BY w.id DESC LIMIT ?""",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT w.*, pm.name FROM portal_withdrawals w
+                   LEFT JOIN portal_members pm ON pm.email = w.email
+                   ORDER BY w.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_portal_withdrawal_status(withdrawal_id: int, status: str, note: Optional[str] = None) -> dict:
+    """出金申請の状態遷移。paid 確定時に残高をアトミックに減算する。"""
+    if status not in ("pending", "processing", "paid", "rejected"):
+        raise ValueError(f"不正なステータス: {status}")
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT email, amount, status FROM portal_withdrawals WHERE id = ?",
+            (withdrawal_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("出金申請が見つかりません")
+        if row["status"] in ("paid", "cancelled"):
+            raise ValueError(f"この申請は既に {row['status']} のため変更できません")
+        if status == "paid":
+            m = conn.execute(
+                "SELECT balance FROM portal_members WHERE email = ?", (row["email"],)
+            ).fetchone()
+            bal = (m["balance"] or 0) if m else 0
+            if round(row["amount"], 2) > round(bal, 2):
+                raise ValueError(f"残高不足のため paid にできません（残高 {bal:.2f} / 申請 {row['amount']:.2f}）")
+            conn.execute(
+                "UPDATE portal_members SET balance = round(balance - ?, 2), updated_at = ? WHERE email = ?",
+                (row["amount"], now, row["email"]),
+            )
+        if note is None:
+            conn.execute(
+                "UPDATE portal_withdrawals SET status = ?, action_at = ? WHERE id = ?",
+                (status, now, withdrawal_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE portal_withdrawals SET status = ?, note = ?, action_at = ? WHERE id = ?",
+                (status, note, now, withdrawal_id),
+            )
+        return {"id": withdrawal_id, "email": row["email"], "amount": row["amount"], "status": status}
+
+
+def mark_portal_withdrawal_notified(withdrawal_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE portal_withdrawals SET notified_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), withdrawal_id),
+        )

@@ -62,10 +62,10 @@ def verify_token(token: str) -> Optional[dict]:
     return payload
 
 
-def issue_member_token(email: str, ttl_seconds: int = _TOKEN_TTL_SECONDS) -> dict:
-    """ラッキーマスタード会員ポータル用のステートレストークン（scope=lucky）。"""
+def issue_member_token(email: str, ttl_seconds: int = _TOKEN_TTL_SECONDS, scope: str = "lucky") -> dict:
+    """会員ポータル用のステートレストークン（scope=lucky | portal）。"""
     expires_at = int(time.time()) + ttl_seconds
-    payload = {"m": email, "scope": "lucky", "exp": expires_at}
+    payload = {"m": email, "scope": scope, "exp": expires_at}
     payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     payload_b64 = base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode("ascii")
     sig = hmac.new(_derive_secret(), payload_b64.encode("ascii"), hashlib.sha256).digest()
@@ -83,6 +83,24 @@ def require_lucky_member(creds: HTTPAuthorizationCredentials = Depends(_bearer))
         )
     payload = verify_token(creds.credentials)
     if payload is None or payload.get("scope") != "lucky" or not payload.get("m"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="セッションが無効または期限切れです。再度ログインしてください",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload["m"]
+
+
+def require_portal_member(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """ポータル(/portal)用の依存関係。scope=portal のトークンを検証し email を返す。"""
+    if creds is None or creds.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="ログインが必要です",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = verify_token(creds.credentials)
+    if payload is None or payload.get("scope") != "portal" or not payload.get("m"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="セッションが無効または期限切れです。再度ログインしてください",

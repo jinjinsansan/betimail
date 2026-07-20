@@ -40,7 +40,7 @@ from config import (
     PUBLIC_CHECK_EXPOSE_DETAILS, PUBLIC_CHECK_EXPOSE_NAME, PUBLIC_CHECK_EXPOSE_NFT_TYPES,
     PUBLIC_CHECK_REQUIRE_OTP, PUBLIC_CHECK_OTP_TTL_SECONDS, PUBLIC_CHECK_OTP_RESEND_SECONDS,
     RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_INBOUND_DOMAINS,
-    LUCKY_PORTAL_ALLOWED_EMAILS,
+    LUCKY_PORTAL_ALLOWED_EMAILS, PORTAL_ALLOWED_EMAILS,
 )
 
 
@@ -437,6 +437,392 @@ async def api_lucky_admin_summary(_admin: str = Depends(require_admin)):
     totals = db.lucky_totals()
     latest = db.get_latest_lucky_distribution()
     return {"totals": totals, "latest_distribution": latest}
+
+
+# ── ポータル（betiダッシュボード）会員ポータル ────────────
+# 旧 nftportal 系サイトの自前再構築。会員は資産閲覧 + ステーク + 買い取り意思表示 + 出金申請。
+# 認証は lucky と同じメール OTP → scope=portal のトークンを発行。
+_portal_otp_lock = threading.Lock()
+_portal_otps: dict[str, dict] = {}
+
+PORTAL_NFT_LABELS = {
+    "MEMBER": "会員権NFT",
+    "HOIHOI": "パチスロホイホイNFT",
+    "SPECIAL_MUSTARD": "スペシャルマスタードNFT",
+    "LEADER": "LEADER",
+    "DIGITAL_PACHISURO": "DIGITAL_PACHISURO",
+}
+
+
+class PortalLoginRequest(BaseModel):
+    email: EmailStr
+
+
+class PortalVerifyRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=12)
+
+
+class PortalStakeRequest(BaseModel):
+    nft_type: str = Field(min_length=1, max_length=32)
+
+
+class PortalBuybackConfirmRequest(BaseModel):
+    nft_type: str = "HOIHOI"
+    confirm: bool = False  # UI の「二度と元に戻せません」確認を API でも強制
+
+
+class PortalWithdrawCreateRequest(BaseModel):
+    amount: float = Field(gt=0, le=1_000_000)
+    destination: str = Field(min_length=10, max_length=128)
+
+
+class PortalDistributeRequest(BaseModel):
+    nft_type: str  # 'MEMBER' | 'HOIHOI'
+    amount: float = Field(gt=0, le=10_000_000)
+    note: str = ""
+    force: bool = False
+
+
+class PortalBuybackUpdateRequest(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+class PortalWithdrawalUpdateRequest(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+def _portal_access_allowed(email: str) -> bool:
+    """ソフトローンチ用のアクセス制限。PORTAL_ALLOWED_EMAILS が空なら全員公開。"""
+    if not PORTAL_ALLOWED_EMAILS:
+        return True
+    return email.strip().lower() in PORTAL_ALLOWED_EMAILS
+
+
+def _issue_portal_otp(email: str) -> str:
+    now_ts = time.time()
+    with _portal_otp_lock:
+        for e in [e for e, r in _portal_otps.items() if r.get("expires_at", 0) < now_ts]:
+            _portal_otps.pop(e, None)
+        rec = _portal_otps.get(email)
+        if rec and (now_ts - rec.get("issued_at", 0)) < PUBLIC_CHECK_OTP_RESEND_SECONDS:
+            raise HTTPException(status_code=429, detail="確認コードの再送は少し待ってからお試しください")
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        salt = secrets.token_hex(8)
+        _portal_otps[email] = {
+            "salt": salt,
+            "digest": hashlib.sha256((salt + code).encode("utf-8")).hexdigest(),
+            "issued_at": now_ts,
+            "expires_at": now_ts + max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+            "tries": 0,
+        }
+        return code
+
+
+def _verify_portal_otp(email: str, code: str) -> bool:
+    now_ts = time.time()
+    normalized = (code or "").strip()
+    with _portal_otp_lock:
+        rec = _portal_otps.get(email)
+        if not rec or rec.get("expires_at", 0) < now_ts:
+            _portal_otps.pop(email, None)
+            return False
+        rec["tries"] = int(rec.get("tries", 0)) + 1
+        if rec["tries"] > 8:
+            _portal_otps.pop(email, None)
+            return False
+        digest = hashlib.sha256((rec["salt"] + normalized).encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(rec["digest"], digest):
+            return False
+        _portal_otps.pop(email, None)
+        return True
+
+
+def _portal_telegram_notify(text: str) -> bool:
+    """買い取り/出金申請の Telegram 即時通知（同期・失敗しても本処理は成功扱い）。"""
+    import urllib.parse
+    import urllib.request
+    from config import TELEGRAM_CHAT_IDS
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_IDS:
+        return False
+    try:
+        data = urllib.parse.urlencode({
+            "chat_id": TELEGRAM_CHAT_IDS[0], "text": text, "parse_mode": "HTML",
+            "disable_web_page_preview": "true",
+        }).encode()
+        with urllib.request.urlopen(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", data=data, timeout=10
+        ) as r:
+            return r.status == 200
+    except Exception:
+        log.exception("Portal telegram notify failure")
+        return False
+
+
+@app.post("/api/portal/login")
+async def api_portal_login(body: PortalLoginRequest, request: Request):
+    """会員のメール OTP ログイン要求。ポータル登録会員のみコードを送信する。"""
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    if not _portal_access_allowed(email):
+        return {"found": False}
+    if not db.get_portal_member(email):
+        return {"found": False}
+    if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+        raise HTTPException(status_code=503, detail="ログイン機能は一時的に利用できません")
+    code = _issue_portal_otp(email)
+    body_text = (
+        "betiダッシュボード（会員ポータル）のログインコードです。\n\n"
+        f"ログインコード: {code}\n"
+        f"有効期限: {max(60, PUBLIC_CHECK_OTP_TTL_SECONDS) // 60} 分\n\n"
+        "このコードに心当たりがない場合は破棄してください。"
+    )
+    try:
+        mail.send_email(
+            to_email=email, to_name="",
+            subject="【betiダッシュボード】ログインコード", body=body_text,
+        )
+    except Exception:
+        log.exception("Portal login OTP send failure")
+        raise HTTPException(status_code=503, detail="コード送信に失敗しました。時間をおいて再試行してください")
+    return {
+        "verification_required": True,
+        "masked_email": _mask_email(email),
+        "expires_in": max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+    }
+
+
+@app.post("/api/portal/verify")
+async def api_portal_verify(body: PortalVerifyRequest, request: Request):
+    """OTP 検証 → 会員トークン(scope=portal)発行 + ダッシュボードを返す。"""
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    if not _portal_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    if not _verify_portal_otp(email, body.code):
+        raise HTTPException(status_code=400, detail="コードが無効または期限切れです")
+    dash = db.get_portal_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="会員情報が見つかりません")
+    tok = auth_mod.issue_member_token(email, scope="portal")
+    return {"token": tok["token"], "expires_at": tok["expires_at"], "dashboard": dash}
+
+
+@app.get("/api/portal/me")
+async def api_portal_me(email: str = Depends(auth_mod.require_portal_member)):
+    """会員トークンで自分のダッシュボードを再取得。"""
+    if not _portal_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    dash = db.get_portal_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="会員情報が見つかりません")
+    return dash
+
+
+@app.post("/api/portal/stake")
+async def api_portal_stake(
+    body: PortalStakeRequest,
+    email: str = Depends(auth_mod.require_portal_member),
+):
+    """未ステーク口数の一括ステーク（ステークボタン）。"""
+    if not _portal_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    try:
+        result = db.stake_portal_units(email, body.nft_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log.info("Portal stake: %s", result)
+    return {**result, "dashboard": db.get_portal_dashboard(email)}
+
+
+@app.post("/api/portal/buyback")
+async def api_portal_buyback(
+    body: PortalBuybackConfirmRequest,
+    bg: BackgroundTasks,
+    email: str = Depends(auth_mod.require_portal_member),
+):
+    """買い取りの意思表示（不可逆）。confirm=true 必須。Telegram に即時通知。"""
+    if not _portal_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="確認チェックが必要です")
+    if body.nft_type != "HOIHOI":
+        raise HTTPException(status_code=400, detail="買い取り申請の対象外です")
+    try:
+        result = db.create_buyback_request(email, body.nft_type)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    member = db.get_portal_member(email) or {}
+    label = PORTAL_NFT_LABELS.get(body.nft_type, body.nft_type)
+    msg = (
+        f"🔴 <b>買い取り申請</b> (ID: {result['id']})\n"
+        f"会員: {member.get('name') or '?'} &lt;{email}&gt;\n"
+        f"対象: {label} {result['units']} 口\n"
+        f"申請日時: {result['requested_at'][:19]}\n"
+        f"管理画面のポータルタブから確認してください。"
+    )
+
+    def _notify():
+        if _portal_telegram_notify(msg):
+            db.mark_buyback_notified(result["id"])
+
+    bg.add_task(_notify)
+    log.info("Portal buyback request: %s", result)
+    return {**result, "dashboard": db.get_portal_dashboard(email)}
+
+
+@app.post("/api/portal/withdraw")
+async def api_portal_withdraw(
+    body: PortalWithdrawCreateRequest,
+    bg: BackgroundTasks,
+    email: str = Depends(auth_mod.require_portal_member),
+):
+    """出金申請（ウォレットアドレス + 金額。一部出金可）。Telegram に即時通知。"""
+    if not _portal_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    try:
+        result = db.create_portal_withdrawal(email, body.amount, body.destination)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    member = db.get_portal_member(email) or {}
+    msg = (
+        f"💸 <b>ポータル出金申請</b> (ID: {result['id']})\n"
+        f"会員: {member.get('name') or '?'} &lt;{email}&gt;\n"
+        f"金額: {result['amount']:.2f} USDT\n"
+        f"送金先: <code>{result['destination']}</code>\n"
+        f"管理画面のポータルタブから処理してください。"
+    )
+
+    def _notify():
+        if _portal_telegram_notify(msg):
+            db.mark_portal_withdrawal_notified(result["id"])
+
+    bg.add_task(_notify)
+    log.info("Portal withdrawal request: %s", result)
+    return {**result, "dashboard": db.get_portal_dashboard(email)}
+
+
+@app.delete("/api/portal/withdraw/{withdrawal_id}")
+async def api_portal_withdraw_cancel(
+    withdrawal_id: int,
+    email: str = Depends(auth_mod.require_portal_member),
+):
+    """出金申請の取り下げ（pending のみ・本人のみ）。"""
+    if not db.cancel_portal_withdrawal(withdrawal_id, email):
+        raise HTTPException(status_code=404, detail="取り下げ可能な申請が見つかりません")
+    return {"ok": True, "dashboard": db.get_portal_dashboard(email)}
+
+
+# ── ポータル管理 API（既存 Bearer 認証） ─────────────────
+@app.get("/api/portal/admin/summary")
+async def api_portal_admin_summary(_admin: str = Depends(require_admin)):
+    return {"totals": db.portal_totals(),
+            "distributions": db.list_portal_distributions(limit=10)}
+
+
+@app.get("/api/portal/admin/members")
+async def api_portal_admin_members(
+    q: str = "", _admin: str = Depends(require_admin),
+):
+    members = db.search_portal_members(q, limit=50)
+    return {"members": members}
+
+
+@app.get("/api/portal/admin/members/{email:path}")
+async def api_portal_admin_member_detail(email: str, _admin: str = Depends(require_admin)):
+    dash = db.get_portal_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="ポータル会員が見つかりません")
+    return dash
+
+
+@app.post("/api/portal/admin/distribute/preview")
+async def api_portal_distribute_preview(
+    body: PortalDistributeRequest, _admin: str = Depends(require_admin),
+):
+    """分配実行前のプレビュー（対象人数・総口数・1口あたり額）。"""
+    try:
+        return db.preview_portal_distribution(body.nft_type, body.amount)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/portal/admin/distribute")
+async def api_portal_distribute(
+    body: PortalDistributeRequest, admin: str = Depends(require_admin),
+):
+    """管理者: 買い取り原資をステーク口数比例で分配する（手動のみ）。
+
+    誤操作防止: 同日に同種別の分配が既にあれば 409（force=true で実行可）。
+    """
+    date_str = datetime.now(timezone(timedelta(hours=9))).strftime("%Y-%m-%d")
+    if not body.force and db.portal_distribution_exists_for_date(date_str, body.nft_type):
+        raise HTTPException(
+            status_code=409,
+            detail=f"{date_str} は {body.nft_type} へ分配済みです。再実行する場合は確認のうえ force を指定してください。",
+        )
+    try:
+        result = db.create_portal_distribution(
+            body.nft_type, body.amount, note=body.note, created_by=admin,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    label = PORTAL_NFT_LABELS.get(body.nft_type, body.nft_type)
+    _portal_telegram_notify(
+        f"✅ <b>ポータル分配 実行</b>\n"
+        f"対象: {label}\n"
+        f"総額: {result['total_amount']:.2f} USDT → {result['recipients']} 名 / {result['total_units']} 口\n"
+        f"1口あたり: {result['rate']:.6f} USDT"
+    )
+    log.info("Portal distribution by admin: %s", result)
+    return result
+
+
+@app.get("/api/portal/admin/distributions")
+async def api_portal_admin_distributions(_admin: str = Depends(require_admin), limit: int = 60):
+    return {"distributions": db.list_portal_distributions(limit=limit)}
+
+
+@app.get("/api/portal/admin/buybacks")
+async def api_portal_admin_buybacks(
+    status: str = "", _admin: str = Depends(require_admin),
+):
+    return {"buybacks": db.list_buyback_requests(status=status)}
+
+
+@app.patch("/api/portal/admin/buybacks/{request_id}")
+async def api_portal_admin_buyback_update(
+    request_id: int, body: PortalBuybackUpdateRequest, _admin: str = Depends(require_admin),
+):
+    try:
+        ok = db.update_buyback_status(request_id, body.status, body.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not ok:
+        raise HTTPException(status_code=404, detail="買い取り申請が見つかりません")
+    return {"ok": True}
+
+
+@app.get("/api/portal/admin/withdrawals")
+async def api_portal_admin_withdrawals(
+    status: str = "", _admin: str = Depends(require_admin),
+):
+    return {"withdrawals": db.list_portal_withdrawals(status=status)}
+
+
+@app.patch("/api/portal/admin/withdrawals/{withdrawal_id}")
+async def api_portal_admin_withdrawal_update(
+    withdrawal_id: int, body: PortalWithdrawalUpdateRequest, _admin: str = Depends(require_admin),
+):
+    try:
+        result = db.update_portal_withdrawal_status(withdrawal_id, body.status, body.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
 
 
 # ── 認証 ────────────────────────────────────────────────
