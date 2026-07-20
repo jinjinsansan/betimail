@@ -293,6 +293,31 @@ def _build_portal_block(portal: Optional[dict], is_member: bool) -> str:
     return ""
 
 
+def _build_white_block(white: Optional[dict], is_member: bool) -> str:
+    """白のダッシュボード（afi再構築）の登録状況ブロックを組み立てる。"""
+    if white:
+        parts = [
+            f"- 会員権NFT: {white.get('kaiin_units') or 0} 口",
+            f"- パチスロホイホイ: {white.get('hoihoi_units') or 0} 口",
+            f"- 残高: {(white.get('balance') or 0):,.2f} USDT",
+        ]
+        pending_wd = [w for w in (white.get("withdrawals") or [])
+                      if w.get("status") in ("pending", "processing")]
+        if pending_wd:
+            total = sum(w.get("amount") or 0 for w in pending_wd)
+            parts.append(f"- 進行中の出金申請: {len(pending_wd)} 件 / 合計 {total:,.2f} USDT")
+        return (
+            "\n\n■ このメンバー様の白のダッシュボード（旧 afi）登録データ:\n"
+            + "\n".join(parts) + "\n"
+            "（白のダッシュボードの残高はポータルの残高とは別系統です。出金申請は受け付けて"
+            "いますが、送金はポータル側の出金処理を優先する運用のため、時期は約束せず"
+            "「順次対応」の表現に留めてください。具体的な金額は本文に書きすぎないこと）\n"
+        )
+    if is_member:
+        return ""
+    return ""
+
+
 def generate_reply(
     sender_name: str,
     sender_email: str,
@@ -304,6 +329,7 @@ def generate_reply(
     is_member: bool = True,
     lucky: Optional[dict] = None,
     portal: Optional[dict] = None,
+    white: Optional[dict] = None,
 ) -> dict:
     """AI返信生成。{reply, confidence, needs_human, reason} を返す。"""
     if client is None:
@@ -319,7 +345,9 @@ def generate_reply(
     purchase_block = ""
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴（DB記録）:\n{_format_purchase_summary(purchases)}\n"
-    lucky_block = _build_lucky_block(lucky, is_member) + _build_portal_block(portal, is_member)
+    lucky_block = (_build_lucky_block(lucky, is_member)
+                   + _build_portal_block(portal, is_member)
+                   + _build_white_block(white, is_member))
 
     if is_member:
         guidance = """このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
@@ -462,6 +490,7 @@ def regenerate_reply(
     is_member: bool = True,
     lucky: Optional[dict] = None,
     portal: Optional[dict] = None,
+    white: Optional[dict] = None,
 ) -> dict:
     """前回の下書きに対する仁氏からの修正指示を受けて、AI が下書きを再生成する。
 
@@ -478,7 +507,9 @@ def regenerate_reply(
     purchase_block = ""
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴:\n{_format_purchase_summary(purchases)}\n"
-    lucky_block = _build_lucky_block(lucky, is_member) + _build_portal_block(portal, is_member)
+    lucky_block = (_build_lucky_block(lucky, is_member)
+                   + _build_portal_block(portal, is_member)
+                   + _build_white_block(white, is_member))
 
     member_status = "beti 登録メンバー" if is_member else "⚠️ 登録未確認（DBに該当なし）"
 

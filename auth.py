@@ -109,6 +109,24 @@ def require_portal_member(creds: HTTPAuthorizationCredentials = Depends(_bearer)
     return payload["m"]
 
 
+def require_white_member(creds: HTTPAuthorizationCredentials = Depends(_bearer)) -> str:
+    """白のダッシュボード(/white)用の依存関係。scope=white のトークンを検証し email を返す。"""
+    if creds is None or creds.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="ログインが必要です",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    payload = verify_token(creds.credentials)
+    if payload is None or payload.get("scope") != "white" or not payload.get("m"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="セッションが無効または期限切れです。再度ログインしてください",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload["m"]
+
+
 def check_credentials(username: str, password: str) -> bool:
     if not ADMIN_PASSWORD:
         return False

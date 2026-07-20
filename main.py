@@ -40,7 +40,7 @@ from config import (
     PUBLIC_CHECK_EXPOSE_DETAILS, PUBLIC_CHECK_EXPOSE_NAME, PUBLIC_CHECK_EXPOSE_NFT_TYPES,
     PUBLIC_CHECK_REQUIRE_OTP, PUBLIC_CHECK_OTP_TTL_SECONDS, PUBLIC_CHECK_OTP_RESEND_SECONDS,
     RESEND_API_KEY, RESEND_FROM_EMAIL, RESEND_INBOUND_DOMAINS,
-    LUCKY_PORTAL_ALLOWED_EMAILS, PORTAL_ALLOWED_EMAILS,
+    LUCKY_PORTAL_ALLOWED_EMAILS, PORTAL_ALLOWED_EMAILS, WHITE_ALLOWED_EMAILS,
 )
 
 
@@ -825,6 +825,214 @@ async def api_portal_admin_withdrawal_update(
     return result
 
 
+# ── 白のダッシュボード（afi.irah.uk 再構築） ─────────────
+# 資産閲覧（会員権/ホイホイ枚数・afi残高）+ afi残高の出金申請。分配機能は無し。
+# 送金はポータル側の出金処理を優先する（会員UIに注意書き常設）。
+_white_otp_lock = threading.Lock()
+_white_otps: dict[str, dict] = {}
+
+
+class WhiteLoginRequest(BaseModel):
+    email: EmailStr
+
+
+class WhiteVerifyRequest(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=4, max_length=12)
+
+
+class WhiteWithdrawCreateRequest(BaseModel):
+    amount: float = Field(gt=0, le=1_000_000)
+    destination: str = Field(min_length=10, max_length=128)
+
+
+class WhiteWithdrawalUpdateRequest(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+def _white_access_allowed(email: str) -> bool:
+    if not WHITE_ALLOWED_EMAILS:
+        return True
+    return email.strip().lower() in WHITE_ALLOWED_EMAILS
+
+
+def _issue_white_otp(email: str) -> str:
+    now_ts = time.time()
+    with _white_otp_lock:
+        for e in [e for e, r in _white_otps.items() if r.get("expires_at", 0) < now_ts]:
+            _white_otps.pop(e, None)
+        rec = _white_otps.get(email)
+        if rec and (now_ts - rec.get("issued_at", 0)) < PUBLIC_CHECK_OTP_RESEND_SECONDS:
+            raise HTTPException(status_code=429, detail="確認コードの再送は少し待ってからお試しください")
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        salt = secrets.token_hex(8)
+        _white_otps[email] = {
+            "salt": salt,
+            "digest": hashlib.sha256((salt + code).encode("utf-8")).hexdigest(),
+            "issued_at": now_ts,
+            "expires_at": now_ts + max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+            "tries": 0,
+        }
+        return code
+
+
+def _verify_white_otp(email: str, code: str) -> bool:
+    now_ts = time.time()
+    normalized = (code or "").strip()
+    with _white_otp_lock:
+        rec = _white_otps.get(email)
+        if not rec or rec.get("expires_at", 0) < now_ts:
+            _white_otps.pop(email, None)
+            return False
+        rec["tries"] = int(rec.get("tries", 0)) + 1
+        if rec["tries"] > 8:
+            _white_otps.pop(email, None)
+            return False
+        digest = hashlib.sha256((rec["salt"] + normalized).encode("utf-8")).hexdigest()
+        if not hmac.compare_digest(rec["digest"], digest):
+            return False
+        _white_otps.pop(email, None)
+        return True
+
+
+@app.post("/api/white/login")
+async def api_white_login(body: WhiteLoginRequest, request: Request):
+    """白のダッシュボード: メール OTP ログイン要求。"""
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    if not _white_access_allowed(email):
+        return {"found": False}
+    if not db.get_afi_member(email):
+        return {"found": False}
+    if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+        raise HTTPException(status_code=503, detail="ログイン機能は一時的に利用できません")
+    code = _issue_white_otp(email)
+    body_text = (
+        "白のダッシュボードのログインコードです。\n\n"
+        f"ログインコード: {code}\n"
+        f"有効期限: {max(60, PUBLIC_CHECK_OTP_TTL_SECONDS) // 60} 分\n\n"
+        "このコードに心当たりがない場合は破棄してください。"
+    )
+    try:
+        mail.send_email(
+            to_email=email, to_name="",
+            subject="【白のダッシュボード】ログインコード", body=body_text,
+        )
+    except Exception:
+        log.exception("White login OTP send failure")
+        raise HTTPException(status_code=503, detail="コード送信に失敗しました。時間をおいて再試行してください")
+    return {
+        "verification_required": True,
+        "masked_email": _mask_email(email),
+        "expires_in": max(60, PUBLIC_CHECK_OTP_TTL_SECONDS),
+    }
+
+
+@app.post("/api/white/verify")
+async def api_white_verify(body: WhiteVerifyRequest, request: Request):
+    """OTP 検証 → 会員トークン(scope=white)発行 + ダッシュボードを返す。"""
+    email = str(body.email).strip().lower()
+    limit_public_check(request, email)
+    await asyncio.sleep(0.2)
+    if not _white_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    if not _verify_white_otp(email, body.code):
+        raise HTTPException(status_code=400, detail="コードが無効または期限切れです")
+    dash = db.get_afi_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="会員情報が見つかりません")
+    tok = auth_mod.issue_member_token(email, scope="white")
+    return {"token": tok["token"], "expires_at": tok["expires_at"], "dashboard": dash}
+
+
+@app.get("/api/white/me")
+async def api_white_me(email: str = Depends(auth_mod.require_white_member)):
+    if not _white_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    dash = db.get_afi_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="会員情報が見つかりません")
+    return dash
+
+
+@app.post("/api/white/withdraw")
+async def api_white_withdraw(
+    body: WhiteWithdrawCreateRequest,
+    bg: BackgroundTasks,
+    email: str = Depends(auth_mod.require_white_member),
+):
+    """白のダッシュボード残高の出金申請。Telegram に即時通知。"""
+    if not _white_access_allowed(email):
+        raise HTTPException(status_code=403, detail="現在この会員ページは限定公開中です")
+    try:
+        result = db.create_afi_withdrawal(email, body.amount, body.destination)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    member = db.get_afi_member(email) or {}
+    msg = (
+        f"🤍 <b>白のダッシュボード 出金申請</b> (ID: {result['id']})\n"
+        f"会員: {member.get('name') or '?'} &lt;{email}&gt;\n"
+        f"金額: {result['amount']:.2f} USDT\n"
+        f"送金先: <code>{result['destination']}</code>\n"
+        f"※送金はポータル側の出金処理を優先する運用です。"
+    )
+
+    def _notify():
+        if _portal_telegram_notify(msg):
+            db.mark_afi_withdrawal_notified(result["id"])
+
+    bg.add_task(_notify)
+    log.info("White withdrawal request: %s", result)
+    return {**result, "dashboard": db.get_afi_dashboard(email)}
+
+
+@app.delete("/api/white/withdraw/{withdrawal_id}")
+async def api_white_withdraw_cancel(
+    withdrawal_id: int,
+    email: str = Depends(auth_mod.require_white_member),
+):
+    if not db.cancel_afi_withdrawal(withdrawal_id, email):
+        raise HTTPException(status_code=404, detail="取り下げ可能な申請が見つかりません")
+    return {"ok": True, "dashboard": db.get_afi_dashboard(email)}
+
+
+# ── 白のダッシュボード管理 API（既存 Bearer 認証） ────────
+@app.get("/api/white/admin/summary")
+async def api_white_admin_summary(_admin: str = Depends(require_admin)):
+    return {"totals": db.afi_totals()}
+
+
+@app.get("/api/white/admin/members")
+async def api_white_admin_members(q: str = "", _admin: str = Depends(require_admin)):
+    return {"members": db.search_afi_members(q, limit=50)}
+
+
+@app.get("/api/white/admin/members/{email:path}")
+async def api_white_admin_member_detail(email: str, _admin: str = Depends(require_admin)):
+    dash = db.get_afi_dashboard(email)
+    if not dash:
+        raise HTTPException(status_code=404, detail="白ダッシュボード会員が見つかりません")
+    return dash
+
+
+@app.get("/api/white/admin/withdrawals")
+async def api_white_admin_withdrawals(status: str = "", _admin: str = Depends(require_admin)):
+    return {"withdrawals": db.list_afi_withdrawals(status=status)}
+
+
+@app.patch("/api/white/admin/withdrawals/{withdrawal_id}")
+async def api_white_admin_withdrawal_update(
+    withdrawal_id: int, body: WhiteWithdrawalUpdateRequest, _admin: str = Depends(require_admin),
+):
+    try:
+        result = db.update_afi_withdrawal_status(withdrawal_id, body.status, body.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return result
+
+
 # ── 認証 ────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     username: str
@@ -1477,6 +1685,7 @@ async def webhook_email(
         purchase_summary = db.get_purchase_summary(sender_email) if is_member else None
         lucky_summary = db.get_lucky_dashboard(sender_email)
         portal_summary = db.get_portal_dashboard(sender_email)
+        white_summary = db.get_afi_dashboard(sender_email)
 
         try:
             result = ai.generate_reply(
@@ -1490,6 +1699,7 @@ async def webhook_email(
                 is_member=is_member,
                 lucky=lucky_summary,
                 portal=portal_summary,
+                white=white_summary,
             )
         except Exception as e:
             log.exception("AI generation failure")

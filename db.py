@@ -290,6 +290,39 @@ CREATE INDEX IF NOT EXISTS idx_portal_rewards_dist ON portal_rewards(distributio
 CREATE INDEX IF NOT EXISTS idx_portal_buyback_email ON buyback_requests(email);
 CREATE INDEX IF NOT EXISTS idx_portal_wd_email ON portal_withdrawals(email);
 CREATE INDEX IF NOT EXISTS idx_portal_wd_status ON portal_withdrawals(status);
+
+-- ── 白のダッシュボード（afi.irah.uk 再構築）─────────────
+-- 稼働中の afi をスクレイピングスナップショットで置き換える（残高は凍結・ビジネスモデル停止済み）。
+-- 表示は afi 上の値をそのまま採用（会員権/ホイホイの口数体系は afi 独自。ポータルとは別系統）。
+CREATE TABLE IF NOT EXISTS afi_members (
+    email TEXT PRIMARY KEY,             -- 小文字正規化したメール（ログインキー）
+    name TEXT,
+    afi_user_id INTEGER,               -- afi の users.id
+    wallet_address TEXT,
+    balance REAL DEFAULT 0,            -- afi 残高（スナップショット）。出金 paid で減算
+    kaiin_units INTEGER DEFAULT 0,     -- 会員権NFT 口数（afi packet 合計）
+    hoihoi_units INTEGER DEFAULT 0,    -- パチスロホイホイ 口数（device list_user 1エントリ=1口）
+    source TEXT DEFAULT 'scrape',      -- 'scrape' | 'preview'
+    snapshot_at TEXT,                  -- スナップショット取得日時
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS afi_withdrawals (
+    -- 白のダッシュボード残高の出金申請。送金はポータル側を優先（会員UIに注意書き常設）
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    amount REAL NOT NULL,
+    destination TEXT NOT NULL,
+    status TEXT DEFAULT 'pending',     -- pending / processing / paid / rejected / cancelled
+    note TEXT,
+    requested_at TEXT NOT NULL,
+    action_at TEXT,
+    notified_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_afi_wd_email ON afi_withdrawals(email);
+CREATE INDEX IF NOT EXISTS idx_afi_wd_status ON afi_withdrawals(status);
 """
 
 
@@ -1970,5 +2003,247 @@ def mark_portal_withdrawal_notified(withdrawal_id: int) -> None:
     with get_conn() as conn:
         conn.execute(
             "UPDATE portal_withdrawals SET notified_at = ? WHERE id = ?",
+            (datetime.now().isoformat(), withdrawal_id),
+        )
+
+
+# ── 白のダッシュボード（afi.irah.uk 再構築）─────────────
+
+
+def clear_afi_members() -> None:
+    """スナップショット再投入用（afi_members のみ消去。出金申請は運用データのため残す）。"""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM afi_members")
+
+
+def bulk_upsert_afi_members(members: list[dict]) -> int:
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        cur = conn.executemany(
+            """INSERT INTO afi_members
+               (email, name, afi_user_id, wallet_address, balance, kaiin_units,
+                hoihoi_units, source, snapshot_at, created_at, updated_at)
+               VALUES (:email, :name, :afi_user_id, :wallet_address, :balance,
+                       :kaiin_units, :hoihoi_units, :source, :snapshot_at,
+                       :created_at, :updated_at)
+               ON CONFLICT(email) DO UPDATE SET
+                   name=excluded.name,
+                   afi_user_id=excluded.afi_user_id,
+                   wallet_address=excluded.wallet_address,
+                   balance=excluded.balance,
+                   kaiin_units=excluded.kaiin_units,
+                   hoihoi_units=excluded.hoihoi_units,
+                   source=excluded.source,
+                   snapshot_at=excluded.snapshot_at,
+                   updated_at=excluded.updated_at""",
+            [
+                {
+                    "email": (m.get("email") or "").strip().lower(),
+                    "name": m.get("name", ""),
+                    "afi_user_id": m.get("afi_user_id"),
+                    "wallet_address": m.get("wallet_address"),
+                    "balance": m.get("balance", 0),
+                    "kaiin_units": m.get("kaiin_units", 0),
+                    "hoihoi_units": m.get("hoihoi_units", 0),
+                    "source": m.get("source", "scrape"),
+                    "snapshot_at": m.get("snapshot_at"),
+                    "created_at": m.get("created_at", now),
+                    "updated_at": now,
+                }
+                for m in members
+                if (m.get("email") or "").strip()
+            ],
+        )
+        return cur.rowcount
+
+
+def get_afi_member(email: str) -> Optional[dict]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM afi_members WHERE email = ?",
+            (email.strip().lower(),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_afi_withdrawals(email: str, limit: int = 100) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT id, amount, destination, status, requested_at, action_at
+               FROM afi_withdrawals WHERE email = ?
+               ORDER BY id DESC LIMIT ?""",
+            (email.strip().lower(), limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_afi_dashboard(email: str) -> Optional[dict]:
+    """白のダッシュボード用データ一式。旧 afi 出金履歴（withdraw_requests source='afi'）も含む。"""
+    member = get_afi_member(email)
+    if not member:
+        return None
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT external_id, amount_usdt, destination, status, requested_at, action_at
+               FROM withdraw_requests WHERE email = ? AND source = 'afi'
+               ORDER BY requested_at DESC LIMIT 100""",
+            (email.strip().lower(),),
+        ).fetchall()
+        legacy_withdraws = [dict(r) for r in rows]
+    return {
+        "email": member["email"],
+        "name": member.get("name"),
+        "wallet_address": member.get("wallet_address"),
+        "balance": member.get("balance") or 0,
+        "kaiin_units": member.get("kaiin_units") or 0,
+        "hoihoi_units": member.get("hoihoi_units") or 0,
+        "snapshot_at": member.get("snapshot_at"),
+        "withdrawals": get_afi_withdrawals(email),
+        "legacy_withdrawals": legacy_withdraws,
+    }
+
+
+def afi_totals() -> dict:
+    with get_conn() as conn:
+        m = conn.execute(
+            """SELECT COUNT(*) AS members,
+                      COALESCE(SUM(balance), 0) AS total_balance,
+                      COALESCE(SUM(kaiin_units), 0) AS total_kaiin_units,
+                      COALESCE(SUM(hoihoi_units), 0) AS total_hoihoi_units,
+                      SUM(CASE WHEN balance > 0 THEN 1 ELSE 0 END) AS members_with_balance
+               FROM afi_members WHERE COALESCE(source, '') != 'preview'"""
+        ).fetchone()
+        wd = conn.execute(
+            "SELECT status, COUNT(*) c, COALESCE(SUM(amount),0) s FROM afi_withdrawals GROUP BY status"
+        ).fetchall()
+        return {
+            **dict(m),
+            "withdrawals_by_status": {r["status"]: {"count": r["c"], "amount": r["s"]} for r in wd},
+        }
+
+
+def search_afi_members(query: str = "", limit: int = 50) -> list[dict]:
+    q = f"%{(query or '').strip().lower()}%"
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT email, name, balance, kaiin_units, hoihoi_units, source
+               FROM afi_members
+               WHERE email LIKE ? OR lower(COALESCE(name,'')) LIKE ?
+               ORDER BY email LIMIT ?""",
+            (q, q, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def create_afi_withdrawal(email: str, amount: float, destination: str) -> dict:
+    """白のダッシュボード残高の出金申請。残高 - pending/processing 合計 >= amount を検証。
+
+    申請時は残高を減らさない。paid 確定時に減算する。
+    """
+    email = email.strip().lower()
+    if amount <= 0:
+        raise ValueError("金額は 0 より大きい必要があります")
+    destination = (destination or "").strip()
+    if not destination or len(destination) < 10:
+        raise ValueError("ウォレットアドレスを正しく入力してください")
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        m = conn.execute(
+            "SELECT balance FROM afi_members WHERE email = ?", (email,)
+        ).fetchone()
+        if not m:
+            raise ValueError("会員情報が見つかりません")
+        pending = conn.execute(
+            """SELECT COALESCE(SUM(amount), 0) FROM afi_withdrawals
+               WHERE email = ? AND status IN ('pending', 'processing')""",
+            (email,),
+        ).fetchone()[0]
+        available = round((m["balance"] or 0) - pending, 2)
+        if round(amount, 2) > available:
+            raise ValueError(f"出金可能額を超えています（申請可能額: {available:.2f} USDT）")
+        cur = conn.execute(
+            """INSERT INTO afi_withdrawals (email, amount, destination, status, requested_at)
+               VALUES (?, ?, ?, 'pending', ?)""",
+            (email, round(amount, 2), destination, now),
+        )
+        conn.execute(
+            "UPDATE afi_members SET wallet_address = ?, updated_at = ? WHERE email = ?",
+            (destination, now, email),
+        )
+        return {"id": cur.lastrowid, "email": email, "amount": round(amount, 2),
+                "destination": destination, "status": "pending", "requested_at": now}
+
+
+def cancel_afi_withdrawal(withdrawal_id: int, email: str) -> bool:
+    with get_conn() as conn:
+        cur = conn.execute(
+            """UPDATE afi_withdrawals SET status = 'cancelled', action_at = ?
+               WHERE id = ? AND email = ? AND status = 'pending'""",
+            (datetime.now().isoformat(), withdrawal_id, email.strip().lower()),
+        )
+        return cur.rowcount > 0
+
+
+def list_afi_withdrawals(status: str = "", limit: int = 200) -> list[dict]:
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                """SELECT w.*, am.name FROM afi_withdrawals w
+                   LEFT JOIN afi_members am ON am.email = w.email
+                   WHERE w.status = ? ORDER BY w.id DESC LIMIT ?""",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT w.*, am.name FROM afi_withdrawals w
+                   LEFT JOIN afi_members am ON am.email = w.email
+                   ORDER BY w.id DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_afi_withdrawal_status(withdrawal_id: int, status: str, note: Optional[str] = None) -> dict:
+    """白ダッシュボード出金申請の状態遷移。paid 確定時に残高をアトミックに減算する。"""
+    if status not in ("pending", "processing", "paid", "rejected"):
+        raise ValueError(f"不正なステータス: {status}")
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT email, amount, status FROM afi_withdrawals WHERE id = ?",
+            (withdrawal_id,),
+        ).fetchone()
+        if not row:
+            raise ValueError("出金申請が見つかりません")
+        if row["status"] in ("paid", "cancelled"):
+            raise ValueError(f"この申請は既に {row['status']} のため変更できません")
+        if status == "paid":
+            m = conn.execute(
+                "SELECT balance FROM afi_members WHERE email = ?", (row["email"],)
+            ).fetchone()
+            bal = (m["balance"] or 0) if m else 0
+            if round(row["amount"], 2) > round(bal, 2):
+                raise ValueError(f"残高不足のため paid にできません（残高 {bal:.2f} / 申請 {row['amount']:.2f}）")
+            conn.execute(
+                "UPDATE afi_members SET balance = round(balance - ?, 2), updated_at = ? WHERE email = ?",
+                (row["amount"], now, row["email"]),
+            )
+        if note is None:
+            conn.execute(
+                "UPDATE afi_withdrawals SET status = ?, action_at = ? WHERE id = ?",
+                (status, now, withdrawal_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE afi_withdrawals SET status = ?, note = ?, action_at = ? WHERE id = ?",
+                (status, note, now, withdrawal_id),
+            )
+        return {"id": withdrawal_id, "email": row["email"], "amount": row["amount"], "status": status}
+
+
+def mark_afi_withdrawal_notified(withdrawal_id: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE afi_withdrawals SET notified_at = ? WHERE id = ?",
             (datetime.now().isoformat(), withdrawal_id),
         )

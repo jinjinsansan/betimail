@@ -328,6 +328,7 @@ async def _process_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, a
     purchases = db.get_purchase_summary(sender_email) if is_member else None
     lucky = db.get_lucky_dashboard(sender_email)
     portal = db.get_portal_dashboard(sender_email)
+    white = db.get_afi_dashboard(sender_email)
 
     await update.message.reply_text(f"🤖 AI が指示「{instruction[:60]}」で書き直し中…")
 
@@ -344,6 +345,7 @@ async def _process_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, a
             is_member=is_member,
             lucky=lucky,
             portal=portal,
+            white=white,
         )
     except Exception as e:
         log.exception("AI regenerate failure")

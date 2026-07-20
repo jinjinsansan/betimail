@@ -26,7 +26,7 @@ def temp_data(monkeypatch, tmp_path):
     monkeypatch.setenv("RESEND_WEBHOOK_SECRET", "")
 
     # 既に読み込まれているモジュールをリロードして env を反映
-    for mod_name in ("config", "members", "db", "auth", "webhook", "mail", "ai", "telegram_bot", "main"):
+    for mod_name in ("config", "members", "db", "auth", "webhook", "mail", "ai", "telegram_bot", "ratelimit", "main"):
         if mod_name in sys.modules:
             importlib.reload(sys.modules[mod_name])
 
