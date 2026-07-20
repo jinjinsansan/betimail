@@ -1,6 +1,6 @@
 # Betimail プロジェクト状態ドキュメント
 
-**最終更新**: 2026-07-20 (ポータル再構築 実装完了・ソフトローンチ開始。セクション 19 参照)
+**最終更新**: 2026-07-20 (ポータル + 白のダッシュボード 実装完了・両方ソフトローンチ中。セクション 19・20 参照)
 **目的**: 新規 Claude セッションでも即座に状況を把握し、開発・運用を継続できるようにする
 
 > ⚠️ **v1.1.0 以降、本番運用モード**: `TEST_MODE=false` のため実会員にメールが届く状態です。テスト時は **送信先・件名・予約時刻** を必ず確認してから操作してください。
@@ -1171,6 +1171,41 @@ with db.get_conn() as c:
 4. ゲート解除 → 新URL告知メルマガ（送信前に running ジョブ確認！）
 5. `ai_knowledge.md` §10 に公開後の正式情報（URL・ログイン方法・買い取りボタンの公知情報）を追記
 6. 次期案件: 白のダッシュボード（afi.irah.uk 再構築）— `PORTAL_REBUILD_PLAN.md` §12 に概要
+
+---
+
+## 20. 2026-07-20 白のダッシュボード（afi再構築）実装完了 + ソフトローンチ
+
+### 20.1 確定仕様（仁氏回答。詳細は `WHITE_DASHBOARD_PLAN.md`）
+
+- **afi.irah.uk はまだ稼働中**。データはスクレイピングのみ（ベトナム法人ダンプ無し）。残高は凍結（ビジネスモデル停止済み — 5月→7月で変動1名/$55のみと実測確認）
+- 役割: 会員権NFT・ホイホイ枚数（**afi 独自の口数体系**: 会員権=packet合計、ホイホイ=device list_user 1エントリ=1口）+ afi残高の表示 + 出金申請
+- **出金は受け付けるが送金はポータル側を優先** — 会員UIに「今しばらくお待ちください」の注意書き常設
+- **公開はポータルと同時**（告知メルマガ1通で両サイト案内。ポータルのゲート解除は白の完成を待って実施）
+- カットオーバー: 公開直前に afi 側の出金受付を停止（仁氏が調整可）→ 最終スクレイピング → ETL 再実行 → 公開
+
+### 20.2 実装（コミット b0c1ff8 / 1699d28）
+
+- `tools/scrape_afi.py`（既存）→ `tools/import_afi_snapshot.py`: スナップショット→afi_members、完全一致検証つき
+- `db.py`: afi_members / afi_withdrawals（paid で残高減算・pending超過ガード）
+- `main.py`: `/api/white/*`（OTP scope=white・me・withdraw）+ 管理API。`WHITE_ALLOWED_EMAILS` ゲート
+- frontend: `/white`（純白×シルバー×グラファイト。lucky=黒金・portal=白紺と区別）+ 管理タブ WhiteTab
+- `ai.py _build_white_block`（「送金はポータル優先・時期は約束しない」の指示込み）
+- テスト 102件パス（conftest に ratelimit リロード追加 — 共有レートリミッタで429になる問題を修正）
+
+### 20.3 本番状態（2026-07-20）
+
+- VPS 反映済み・/health OK。ETL 投入: **903会員 / 残高 $158,942.94（618名）/ 会員権1,343口 / ホイホイ531口 — 完全一致検証パス**
+- `WHITE_ALLOWED_EMAILS=goldbenchan@gmail.com` = 管理者限定公開中。preview 会員（$88.88/会員権4口/ホイホイ2口）
+- スナップショット: `/opt/betimail/data/_afi_snapshot/`（2026-07-20 13:07 取得）
+- スモーク: 非会員/ゲート外 found:false・admin summary 正常
+
+### 20.4 公開までの手順（ポータルと共通）
+
+1. 仁氏実機確認: https://admin.betimail.uk/white + 管理タブ「白ダッシュボード管理」（+ §19.5 のポータル側残作業）
+2. afi 側の出金受付停止を調整 → `scrape_afi.py` 再実行 → `import_afi_snapshot.py --into-betimail --add-preview` 再実行（残高スナップショット最終化）
+3. `.env` の `PORTAL_ALLOWED_EMAILS=` と `WHITE_ALLOWED_EMAILS=` を両方空に → rebuild → **1通の告知メルマガで両サイト公開**（送信前に running ジョブ確認）
+4. 公開後: afi 出金同期 cron（15,45 * * * *）停止・`ai_knowledge.md` §10 に両サイトの公知情報追記
 
 ---
 
