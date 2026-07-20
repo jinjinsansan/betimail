@@ -4,6 +4,8 @@ import type {
   Health, LoginResponse, MemberHistory, MemberPurchases,
   WithdrawsList, WithdrawStats, MemberWithdrawSummary,
   LuckyDistribution, LuckyAdminSummary,
+  PortalAdminSummary, PortalMemberRow, PortalMemberDetail, PortalDistribution,
+  PortalDistributePreview, PortalBuyback, PortalWithdrawal,
 } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
@@ -171,6 +173,43 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ amount, force, distributed_for }),
       }),
+  },
+
+  portal: {
+    summary: () => request<PortalAdminSummary>("/api/portal/admin/summary"),
+    members: (q: string) =>
+      request<{ members: PortalMemberRow[] }>(`/api/portal/admin/members?q=${encodeURIComponent(q)}`),
+    memberDetail: (email: string) =>
+      request<PortalMemberDetail>(`/api/portal/admin/members/${encodeURIComponent(email)}`),
+    distributions: (limit = 60) =>
+      request<{ distributions: PortalDistribution[] }>(`/api/portal/admin/distributions?limit=${limit}`),
+    distributePreview: (nft_type: string, amount: number) =>
+      request<PortalDistributePreview>("/api/portal/admin/distribute/preview", {
+        method: "POST",
+        body: JSON.stringify({ nft_type, amount }),
+      }),
+    distribute: (nft_type: string, amount: number, note = "", force = false) =>
+      request<{
+        distribution_id: number; nft_type: string; recipients: number; total_units: number;
+        rate: number; total_amount: number; distributed_total: number;
+      }>("/api/portal/admin/distribute", {
+        method: "POST",
+        body: JSON.stringify({ nft_type, amount, note, force }),
+      }),
+    buybacks: (status = "") =>
+      request<{ buybacks: PortalBuyback[] }>(`/api/portal/admin/buybacks${status ? `?status=${status}` : ""}`),
+    updateBuyback: (id: number, status: string, note?: string) =>
+      request<{ ok: boolean }>(`/api/portal/admin/buybacks/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status, note }),
+      }),
+    withdrawals: (status = "") =>
+      request<{ withdrawals: PortalWithdrawal[] }>(`/api/portal/admin/withdrawals${status ? `?status=${status}` : ""}`),
+    updateWithdrawal: (id: number, status: string, note?: string) =>
+      request<{ id: number; email: string; amount: number; status: string }>(
+        `/api/portal/admin/withdrawals/${id}`,
+        { method: "PATCH", body: JSON.stringify({ status, note }) }
+      ),
   },
 
   templates: {

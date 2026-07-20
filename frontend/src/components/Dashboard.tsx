@@ -16,6 +16,7 @@ import JobsTab from "./tabs/JobsTab";
 import WithdrawsTab from "./tabs/WithdrawsTab";
 import AfiWithdrawsTab from "./tabs/AfiWithdrawsTab";
 import LuckyTab from "./tabs/LuckyTab";
+import PortalTab from "./tabs/PortalTab";
 
 type Props = { onLogout: () => void };
 
@@ -106,6 +107,7 @@ export default function Dashboard({ onLogout }: Props) {
     withdraws: ["Betimail", "買い取り", "出金履歴"],
     "afi-withdraws": ["Betimail", "買い取り", "アフィリエイト出金 (afi.irah.uk)"],
     lucky: ["Betimail", "買い取り・報酬", "ラッキーマスタード報酬"],
+    portal: ["Betimail", "買い取り・報酬", "ポータル管理 (betiダッシュボード)"],
     templates: ["Betimail", "設定", "テンプレート"],
     jobs: ["Betimail", "設定", "送信ジョブ"],
   };
@@ -149,6 +151,7 @@ export default function Dashboard({ onLogout }: Props) {
             {tab === "withdraws" && <WithdrawsTab notify={notify} />}
             {tab === "afi-withdraws" && <AfiWithdrawsTab notify={notify} />}
             {tab === "lucky" && <LuckyTab notify={notify} />}
+            {tab === "portal" && <PortalTab notify={notify} />}
             {tab === "jobs" && <JobsTab notify={notify} />}
           </div>
         </div>

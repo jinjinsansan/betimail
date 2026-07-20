@@ -196,3 +196,97 @@ export type LuckyAdminSummary = {
   totals: { members: number; total_nft: number; total_balance: number; total_reward: number };
   latest_distribution: LuckyDistribution | null;
 };
+
+// ── ポータル（betiダッシュボード）管理 ─────────────────
+export type PortalAssetTotals = {
+  nft_type: string;
+  holders: number;
+  purchased_units: number;
+  staked_units: number;
+};
+
+export type PortalTotals = {
+  members: number;
+  total_balance: number;
+  total_reward: number;
+  assets: PortalAssetTotals[];
+  buybacks_by_status: Record<string, number>;
+  withdrawals_by_status: Record<string, { count: number; amount: number }>;
+};
+
+export type PortalDistribution = {
+  id: number;
+  nft_type: string;
+  total_amount: number;
+  total_units: number;
+  rate: number | null;
+  recipients: number;
+  note: string | null;
+  created_by: string;
+  created_at: string;
+};
+
+export type PortalAdminSummary = {
+  totals: PortalTotals;
+  distributions: PortalDistribution[];
+};
+
+export type PortalBuyback = {
+  id: number;
+  email: string;
+  name?: string | null;
+  nft_type: string;
+  units: number | null;
+  status: string;
+  note?: string | null;
+  requested_at: string;
+  action_at?: string | null;
+};
+
+export type PortalWithdrawal = {
+  id: number;
+  email: string;
+  name?: string | null;
+  amount: number;
+  destination: string;
+  status: string;
+  note?: string | null;
+  requested_at: string;
+  action_at?: string | null;
+};
+
+export type PortalMemberRow = {
+  email: string;
+  name?: string | null;
+  balance: number;
+  cumulative_reward: number;
+  source: string;
+};
+
+export type PortalDistributePreview = {
+  nft_type: string;
+  total_amount: number;
+  recipients: number;
+  total_units: number;
+  rate: number | null;
+};
+
+export type PortalMemberDetail = {
+  email: string;
+  name?: string | null;
+  wallet_address?: string | null;
+  balance: number;
+  cumulative_reward: number;
+  assets: {
+    nft_type: string;
+    purchased_units: number;
+    staked_units: number;
+    transferred_in: number;
+    transferred_out: number;
+    unstaked_units: number;
+  }[];
+  buybacks: { id: number; nft_type: string; units: number | null; status: string; requested_at: string }[];
+  withdrawals: { id: number; amount: number; destination: string; status: string; requested_at: string }[];
+  legacy_withdrawals: { external_id: number; amount_usdt: number; status: number; requested_at: string | null }[];
+  history: { nft_type: string | null; amount: number; units: number | null; rewarded_at: string }[];
+};
