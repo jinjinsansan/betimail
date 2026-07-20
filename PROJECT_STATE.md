@@ -1128,5 +1128,51 @@ with db.get_conn() as c:
 
 ---
 
+## 19. 2026-07-20 ポータル再構築 実装完了 + ソフトローンチ開始（**新セッションは必ず読む**）
+
+### 19.1 確定仕様（仁氏回答。詳細は `PORTAL_REBUILD_PLAN.md` §8.1）
+
+- 2サイト体制: **ポータル `/portal`（今回・お金を動かす）** と **白のダッシュボード（次期案件・afi再構築・見るだけ+独自残高出金）**。残高は2系統で互いに干渉しない
+- 買い取りボタン（HOIHOI）: 「二度と元に戻せません」1回表示→確定。**不可逆・取消不可**。継続ボタンは**グレーアウトで押せない**。確定後も保有枚数表示は残す（申請済みバッジ）
+- 分配: 管理画面から「会員権NFTへ分配」「パチスロホイホイへ分配」の2機能のみ。**ステーク口数に均等割り**・手動実行・cron無し。買い取り確定者も分配対象に含む
+- **ステークボタン**: 未ステーク口数を会員が一括ステーク可能（分配対象への救済路。解除は無し）
+- 出金申請: ウォレットアドレス+金額（**一部指定可**）→ Telegram通知 → 管理タブで処理。paid で残高減算
+- **残高は旧ポータルと $1 も違わず完全一致（最重要要件・達成済み）**。スペシャルマスタード78名も表示
+
+### 19.2 実装内容（コミット 9becc0b / 9003058 / b6f3680）
+
+- **ETL** `tools/import_dashboard_dump.py`: dashboard_20260715.sql → 検証レポート → portal_* 投入。投入後に**会員別残高の完全一致検証**（1件でも不一致なら exit 1）
+- **db.py**: portal_members / portal_assets / portal_distributions / portal_rewards / portal_staking_events / buyback_requests / portal_withdrawals + アトミックな分配・ステーク・出金処理
+- **main.py**: `/api/portal/*` 会員API（OTPログイン scope=portal・me・stake・buyback・withdraw）+ 管理API（distribute+preview+同日ガード・buybacks/withdrawals管理・会員検索）+ Telegram即時通知
+- **frontend**: `/portal`（白基調・紺×薄金）+ `lib/portal.ts`（portal_token 分離）+ 管理タブ `PortalTab`
+- **AI連携**: `ai.py _build_portal_block` — 資産・買い取り状態・出金申請をプロンプト注入（webhook + Telegram AI相談モード）
+- テスト: **93件パス**（portal 17 + AI 4 追加）
+
+### 19.3 本番デプロイ（2026-07-20 実施済み）
+
+1. 実行中バルクジョブ無しを確認（§18.2 の教訓）→ DB backup `/opt/betimail/data/betimail.db.bak-preportal`・`.env.bak-preportal`
+2. scp: main/db/auth/config/ai/telegram_bot.py + tools/import_dashboard_dump.py + dump SQL → rebuild
+3. VPS で ETL 実行: **会員837名 / 資産1,186行 / 報酬明細2,863件 / 残高合計 $35,146.86 完全一致** ✅。出金申請 upsert（新規17件）
+4. スモーク: 非会員 found:false / ゲート外会員 found:false（OTP送信されない）/ admin summary 正常
+5. Vercel は git push で自動デプロイ済み
+
+### 19.4 ソフトローンチ状態（現在）
+
+- `.env` に `PORTAL_ALLOWED_EMAILS=goldbenchan@gmail.com` = **管理者限定公開中**
+- プレビュー会員 `goldbenchan@gmail.com`（source='preview'、残高$123.45・HOIHOI 10口/6ステークのダミー。分配・集計から除外）
+- **全会員へ公開**: `.env` の `PORTAL_ALLOWED_EMAILS=` を空に → `docker compose up -d --build betimail` → 新URL告知メルマガ
+- ロールバック: `betimail.db.bak-preportal` / `.env.bak-preportal` から復元
+
+### 19.5 残作業
+
+1. **仁氏の実機確認**: https://admin.betimail.uk/portal （goldbenchan でOTPログイン→ステーク/買い取り/出金申請の動作とTelegram通知）+ 管理画面「ポータル管理」タブ
+2. `PORTAL_REBUILD_PLAN.md` §8.2 の残確認事項（HOIHOI分配対象の範囲 / LEADER・DIGITAL_PACHISURO の扱い / ダンプ継続提供）
+3. 会員リスト差分の確認: `exports/ポータル突合_旧ポータルのみ.csv`（告知未達の可能性42名）/ `ポータル突合_メルマガ名簿のみ.csv`（ログイン不可33名、うち21組は同一人物・別アドレスと特定済み）→ 公開前に仁氏判断
+4. ゲート解除 → 新URL告知メルマガ（送信前に running ジョブ確認！）
+5. `ai_knowledge.md` §10 に公開後の正式情報（URL・ログイン方法・買い取りボタンの公知情報）を追記
+6. 次期案件: 白のダッシュボード（afi.irah.uk 再構築）— `PORTAL_REBUILD_PLAN.md` §12 に概要
+
+---
+
 **運営: 仁氏 (`goldbenchan@gmail.com`)**
 **開発支援: Claude Opus 4.7 (Anthropic) / v1.2.0 は Claude Opus 4.8 / ポータル再構築計画は Claude Fable 5**
