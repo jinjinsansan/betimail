@@ -85,3 +85,58 @@ def test_knowledge_base_mentions_lucky_portal():
     prompt = ai._build_system_prompt()
     assert "https://admin.betimail.uk/lucky" in prompt
     assert "出金機能は現在未提供" in prompt
+
+
+# ── ポータル（betiダッシュボード）ブロック ──────────────
+
+
+def _portal_fixture():
+    return {
+        "email": "taro@example.com",
+        "name": "山田太郎",
+        "balance": 250.75,
+        "cumulative_reward": 100.5,
+        "assets": [
+            {"nft_type": "HOIHOI", "purchased_units": 10, "staked_units": 6,
+             "transferred_in": 0, "transferred_out": 0, "unstaked_units": 4},
+            {"nft_type": "MEMBER", "purchased_units": 20, "staked_units": 20,
+             "transferred_in": 0, "transferred_out": 0, "unstaked_units": 0},
+        ],
+        "buybacks": [
+            {"id": 1, "nft_type": "HOIHOI", "units": 10, "status": "pending",
+             "requested_at": "2026-07-20T10:00:00"},
+        ],
+        "withdrawals": [
+            {"id": 1, "amount": 50.0, "status": "pending", "requested_at": "2026-07-20"},
+        ],
+        "legacy_withdrawals": [],
+        "history": [],
+    }
+
+
+def test_format_portal_summary_contains_assets_and_requests():
+    text = ai._format_portal_summary(_portal_fixture())
+    assert "パチスロホイホイNFT" in text
+    assert "購入 10 口" in text
+    assert "ステーク済み 6 口" in text
+    assert "250.75 USDT" in text
+    assert "買い取り申請あり" in text
+    assert "申請受付" in text
+    assert "取り消し不可" in text
+    assert "進行中の出金申請: 1 件" in text
+
+
+def test_build_portal_block_registered_member():
+    block = ai._build_portal_block(_portal_fixture(), is_member=True)
+    assert "betiダッシュボード" in block
+    assert "取り消せません" in block
+
+
+def test_build_portal_block_member_without_portal():
+    block = ai._build_portal_block(None, is_member=True)
+    assert "登録されていません" in block
+    assert "needs_human" in block
+
+
+def test_build_portal_block_non_member_without_portal():
+    assert ai._build_portal_block(None, is_member=False) == ""

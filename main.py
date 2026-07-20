@@ -1476,6 +1476,7 @@ async def webhook_email(
         history = db.get_recent_exchange(sender_email, limit=AI_HISTORY_DEPTH)
         purchase_summary = db.get_purchase_summary(sender_email) if is_member else None
         lucky_summary = db.get_lucky_dashboard(sender_email)
+        portal_summary = db.get_portal_dashboard(sender_email)
 
         try:
             result = ai.generate_reply(
@@ -1488,6 +1489,7 @@ async def webhook_email(
                 purchases=purchase_summary,
                 is_member=is_member,
                 lucky=lucky_summary,
+                portal=portal_summary,
             )
         except Exception as e:
             log.exception("AI generation failure")

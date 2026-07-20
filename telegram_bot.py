@@ -327,6 +327,7 @@ async def _process_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, a
     nft_type = member["nft_type"] if member else "不明"
     purchases = db.get_purchase_summary(sender_email) if is_member else None
     lucky = db.get_lucky_dashboard(sender_email)
+    portal = db.get_portal_dashboard(sender_email)
 
     await update.message.reply_text(f"🤖 AI が指示「{instruction[:60]}」で書き直し中…")
 
@@ -342,6 +343,7 @@ async def _process_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE, a
             purchases=purchases,
             is_member=is_member,
             lucky=lucky,
+            portal=portal,
         )
     except Exception as e:
         log.exception("AI regenerate failure")

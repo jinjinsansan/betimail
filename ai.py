@@ -228,6 +228,71 @@ def _build_lucky_block(lucky: Optional[dict], is_member: bool) -> str:
     return ""
 
 
+_PORTAL_NFT_LABELS = {
+    "MEMBER": "会員権NFT",
+    "HOIHOI": "パチスロホイホイNFT",
+    "SPECIAL_MUSTARD": "スペシャルマスタードNFT",
+    "LEADER": "LEADER",
+    "DIGITAL_PACHISURO": "DIGITAL_PACHISURO",
+}
+
+_PORTAL_BUYBACK_STATUS_JA = {
+    "pending": "申請受付",
+    "confirmed": "運営確認済み",
+    "processing": "処理中",
+    "paid": "支払い完了",
+    "rejected": "却下",
+}
+
+
+def _format_portal_summary(portal: dict) -> str:
+    """db.get_portal_dashboard() の結果を AI 向けテキストに整形。"""
+    parts = []
+    for a in portal.get("assets") or []:
+        label = _PORTAL_NFT_LABELS.get(a.get("nft_type"), a.get("nft_type"))
+        parts.append(
+            f"- {label}: 購入 {a.get('purchased_units') or 0} 口 / "
+            f"ステーク済み {a.get('staked_units') or 0} 口 / "
+            f"未ステーク {a.get('unstaked_units') or 0} 口"
+        )
+    parts.append(f"- ポータル残高: {(portal.get('balance') or 0):,.2f} USDT")
+    if portal.get("cumulative_reward"):
+        parts.append(f"- 累計受取額: {(portal.get('cumulative_reward') or 0):,.2f} USDT")
+    for b in portal.get("buybacks") or []:
+        label = _PORTAL_NFT_LABELS.get(b.get("nft_type"), b.get("nft_type"))
+        status_ja = _PORTAL_BUYBACK_STATUS_JA.get(b.get("status"), b.get("status"))
+        parts.append(
+            f"- 買い取り申請あり: {label} {b.get('units') or '?'} 口 — 状態: {status_ja}"
+            f"（{str(b.get('requested_at') or '')[:10]} 申請・取り消し不可）"
+        )
+    pending_wd = [w for w in (portal.get("withdrawals") or [])
+                  if w.get("status") in ("pending", "processing")]
+    if pending_wd:
+        total = sum(w.get("amount") or 0 for w in pending_wd)
+        parts.append(f"- 進行中の出金申請: {len(pending_wd)} 件 / 合計 {total:,.2f} USDT")
+    return "\n".join(parts)
+
+
+def _build_portal_block(portal: Optional[dict], is_member: bool) -> str:
+    """新ポータル（betiダッシュボード）の登録状況ブロックを組み立てる。"""
+    if portal:
+        return (
+            "\n\n■ このメンバー様の新ポータル（betiダッシュボード）登録データ:\n"
+            f"{_format_portal_summary(portal)}\n"
+            "（この方は再構築された新ポータルの登録会員です。新ポータルの公開状況・URL 案内の可否は"
+            "知識ベースのセクション10の記載に従ってください。具体的な金額は本文に書きすぎず、"
+            "ポータルでの確認へ誘導してください。買い取り申請は一度確定すると取り消せません）\n"
+        )
+    if is_member:
+        return (
+            "\n\n■ 新ポータル（betiダッシュボード）: この方は新ポータルの会員として登録されて"
+            "いません（旧ポータルのデータベースに記録が見つからないため、ログイン対象外）。\n"
+            "本人がポータルの利用や資産の存在を主張する場合は、別アドレスで登録された可能性を"
+            "案内しつつ、必ず needs_human=true で運営に取り次いでください。\n"
+        )
+    return ""
+
+
 def generate_reply(
     sender_name: str,
     sender_email: str,
@@ -238,6 +303,7 @@ def generate_reply(
     purchases: Optional[dict] = None,
     is_member: bool = True,
     lucky: Optional[dict] = None,
+    portal: Optional[dict] = None,
 ) -> dict:
     """AI返信生成。{reply, confidence, needs_human, reason} を返す。"""
     if client is None:
@@ -253,7 +319,7 @@ def generate_reply(
     purchase_block = ""
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴（DB記録）:\n{_format_purchase_summary(purchases)}\n"
-    lucky_block = _build_lucky_block(lucky, is_member)
+    lucky_block = _build_lucky_block(lucky, is_member) + _build_portal_block(portal, is_member)
 
     if is_member:
         guidance = """このメールに対し、知識ベースと最重要原則を踏まえて返信を作成し、
@@ -395,6 +461,7 @@ def regenerate_reply(
     purchases: Optional[dict] = None,
     is_member: bool = True,
     lucky: Optional[dict] = None,
+    portal: Optional[dict] = None,
 ) -> dict:
     """前回の下書きに対する仁氏からの修正指示を受けて、AI が下書きを再生成する。
 
@@ -411,7 +478,7 @@ def regenerate_reply(
     purchase_block = ""
     if purchases:
         purchase_block = f"\n\n■ このメンバー様の購入履歴:\n{_format_purchase_summary(purchases)}\n"
-    lucky_block = _build_lucky_block(lucky, is_member)
+    lucky_block = _build_lucky_block(lucky, is_member) + _build_portal_block(portal, is_member)
 
     member_status = "beti 登録メンバー" if is_member else "⚠️ 登録未確認（DBに該当なし）"
 
