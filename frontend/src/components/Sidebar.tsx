@@ -13,6 +13,7 @@ export type TabKey =
   | "afi-withdraws"
   | "lucky"
   | "portal"
+  | "white"
   | "templates"
   | "jobs";
 
@@ -38,6 +39,7 @@ export default function Sidebar({ current, onNavigate, approvalCount, health, us
     { key: "afi-withdraws", label: "アフィリエイト出金", icon: <I.DollarSign /> },
     { key: "lucky", label: "ラッキー報酬", icon: <I.Sparkle /> },
     { key: "portal", label: "ポータル管理", icon: <I.Shield /> },
+    { key: "white", label: "白ダッシュボード管理", icon: <I.Diamond /> },
     { key: "templates", label: "テンプレート", icon: <I.FileText /> },
     { key: "jobs", label: "送信ジョブ", icon: <I.Truck /> },
   ];
@@ -61,12 +63,12 @@ export default function Sidebar({ current, onNavigate, approvalCount, health, us
       ))}
 
       <div className="nav-section">買い取り・報酬</div>
-      {items.slice(5, 9).map((it) => (
+      {items.slice(5, 10).map((it) => (
         <NavItem key={it.key} item={it} active={current === it.key} onClick={() => onNavigate(it.key)} />
       ))}
 
       <div className="nav-section">設定</div>
-      {items.slice(9).map((it) => (
+      {items.slice(10).map((it) => (
         <NavItem key={it.key} item={it} active={current === it.key} onClick={() => onNavigate(it.key)} />
       ))}
 

@@ -271,6 +271,49 @@ export type PortalDistributePreview = {
   rate: number | null;
 };
 
+// ── 白のダッシュボード（afi再構築）管理 ─────────────────
+export type WhiteTotals = {
+  members: number;
+  total_balance: number;
+  total_kaiin_units: number;
+  total_hoihoi_units: number;
+  members_with_balance: number;
+  withdrawals_by_status: Record<string, { count: number; amount: number }>;
+};
+
+export type WhiteWithdrawal = {
+  id: number;
+  email: string;
+  name?: string | null;
+  amount: number;
+  destination: string;
+  status: string;
+  note?: string | null;
+  requested_at: string;
+  action_at?: string | null;
+};
+
+export type WhiteMemberRow = {
+  email: string;
+  name?: string | null;
+  balance: number;
+  kaiin_units: number;
+  hoihoi_units: number;
+  source: string;
+};
+
+export type WhiteMemberDetail = {
+  email: string;
+  name?: string | null;
+  wallet_address?: string | null;
+  balance: number;
+  kaiin_units: number;
+  hoihoi_units: number;
+  snapshot_at?: string | null;
+  withdrawals: { id: number; amount: number; destination: string; status: string; requested_at: string }[];
+  legacy_withdrawals: { external_id: number; amount_usdt: number; status: number; requested_at: string | null }[];
+};
+
 export type PortalMemberDetail = {
   email: string;
   name?: string | null;

@@ -1,0 +1,102 @@
+/* 白のダッシュボード（afi.irah.uk 再構築）
+   純白基調・チャコール文字・シルバー×グラファイトのアクセント
+   （ポータルの白×紺、ラッキーの黒×金と明確に区別）モバイル最優先 */
+@import url("https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;700;800&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&display=swap");
+
+.page {
+  --bg: #fafbfc;
+  --bg2: #ffffff;
+  --card: #ffffff;
+  --ink: #23272e;
+  --sub: #626870;
+  --faint: #9aa0a8;
+  --line: #e5e7ea;
+  --hair: #eef0f2;
+  --soft: #f4f5f7;
+  --pos: #1e9e6a;
+  --graphite: #33383f;
+  --graphite2: #4a505a;
+  --graphiteink: #f5f6f8;
+  --graphitesub: #b6bcc6;
+  --silver: #aeb6c2;
+  --silver2: #d5dae1;
+  --sh: 0 1px 2px rgba(35, 39, 46, .05), 0 22px 44px -22px rgba(35, 39, 46, .2);
+  --shsm: 0 1px 2px rgba(35, 39, 46, .05), 0 10px 24px -14px rgba(35, 39, 46, .14);
+
+  min-height: 100dvh;
+  background: radial-gradient(120% 60% at 50% -8%, var(--bg2), var(--bg) 62%);
+  color: var(--ink);
+  font-family: "Zen Kaku Gothic New", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.serif { font-family: "Shippori Mincho", serif; }
+.shell { max-width: 480px; margin: 0 auto; min-height: 100dvh; display: flex; flex-direction: column; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 15px 20px;
+  background: color-mix(in srgb, var(--bg2) 84%, transparent);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  border-bottom: 1px solid var(--hair);
+}
+.logout {
+  font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--sub);
+  background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+  padding: 8px 16px; cursor: pointer; box-shadow: var(--shsm);
+}
+.logout:active { transform: scale(.97); }
+
+.input {
+  width: 100%; box-sizing: border-box; font-size: 16px; font-family: inherit; color: var(--ink);
+  background: var(--bg); border: 1.5px solid var(--line); border-radius: 13px;
+  padding: 14px 15px; outline: none; transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.input:focus { border-color: var(--graphite2); box-shadow: 0 0 0 3px rgba(74, 80, 90, .13); background: var(--card); }
+.codeInput {
+  font-size: 30px; font-family: "Shippori Mincho", serif; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: .4em; text-align: center;
+  padding: 14px 8px 14px 24px;
+}
+.btn {
+  width: 100%; font-family: inherit; font-size: 15px; font-weight: 700; letter-spacing: .04em;
+  color: var(--graphiteink); background: linear-gradient(180deg, var(--graphite2), var(--graphite));
+  border: none; border-radius: 13px; padding: 15px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 9px;
+  box-shadow: 0 10px 22px -10px rgba(51, 56, 63, .5), inset 0 1px 0 rgba(255, 255, 255, .12);
+}
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .55; cursor: default; }
+.btnGhost {
+  width: 100%; font-family: inherit; font-size: 13.5px; font-weight: 600; color: var(--sub);
+  background: transparent; border: 1px solid var(--line); border-radius: 13px;
+  padding: 13px; cursor: pointer;
+}
+.btnGhost:disabled { opacity: .6; }
+.pgBtn {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  font-family: inherit; font-size: 12.5px; font-weight: 600; color: var(--sub);
+  background: var(--card); border: 1px solid var(--line); border-radius: 999px;
+  padding: 9px 16px; cursor: pointer; box-shadow: var(--shsm);
+}
+.pgBtn:disabled { color: var(--faint); cursor: default; opacity: .6; }
+
+.spinner {
+  width: 15px; height: 15px; border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff; border-radius: 50%; display: inline-block;
+  animation: wt-spin .7s linear infinite;
+}
+.spinnerDark {
+  width: 15px; height: 15px; border: 2px solid rgba(35, 39, 46, .2);
+  border-top-color: var(--ink); border-radius: 50%; display: inline-block;
+  animation: wt-spin .7s linear infinite;
+}
+
+@keyframes wt-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .page *, .page *::before, .page *::after { animation-duration: .001ms !important; }
+}

@@ -6,6 +6,7 @@ import type {
   LuckyDistribution, LuckyAdminSummary,
   PortalAdminSummary, PortalMemberRow, PortalMemberDetail, PortalDistribution,
   PortalDistributePreview, PortalBuyback, PortalWithdrawal,
+  WhiteTotals, WhiteWithdrawal, WhiteMemberRow, WhiteMemberDetail,
 } from "./types";
 
 export const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "";
@@ -208,6 +209,21 @@ export const api = {
     updateWithdrawal: (id: number, status: string, note?: string) =>
       request<{ id: number; email: string; amount: number; status: string }>(
         `/api/portal/admin/withdrawals/${id}`,
+        { method: "PATCH", body: JSON.stringify({ status, note }) }
+      ),
+  },
+
+  white: {
+    summary: () => request<{ totals: WhiteTotals }>("/api/white/admin/summary"),
+    members: (q: string) =>
+      request<{ members: WhiteMemberRow[] }>(`/api/white/admin/members?q=${encodeURIComponent(q)}`),
+    memberDetail: (email: string) =>
+      request<WhiteMemberDetail>(`/api/white/admin/members/${encodeURIComponent(email)}`),
+    withdrawals: (status = "") =>
+      request<{ withdrawals: WhiteWithdrawal[] }>(`/api/white/admin/withdrawals${status ? `?status=${status}` : ""}`),
+    updateWithdrawal: (id: number, status: string, note?: string) =>
+      request<{ id: number; email: string; amount: number; status: string }>(
+        `/api/white/admin/withdrawals/${id}`,
         { method: "PATCH", body: JSON.stringify({ status, note }) }
       ),
   },
