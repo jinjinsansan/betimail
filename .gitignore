@@ -18,6 +18,8 @@ PH管理*.csv
 exports/
 data/_import/
 data/_export/
+# afi スクレイピングスナップショット（会員PII: メール・残高）
+data/_afi_snapshot/
 # DBダンプ（会員PII。luckymustard等の.sqlバックアップを誤コミットしない）
 data/*.sql
 data/*.sql.gz
