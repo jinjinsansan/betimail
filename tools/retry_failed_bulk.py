@@ -1,12 +1,25 @@
-"""指定した過去ジョブで失敗した宛先にだけ再送する。
+"""過去ジョブの取りこぼしにだけ再送する。
 
-使い方:
+2 つのモードがある:
+
+1. 失敗した宛先への再送（既定）
     docker exec betimail python /app/tools/retry_failed_bulk.py 2 --confirm
         # ジョブ #2 で status=error だった宛先にだけ、同じ件名・本文で再送
 
+2. 中断したジョブの再開（--resume-missing）
+    docker exec betimail python /app/tools/retry_failed_bulk.py 12 --resume-missing --confirm
+        # bulk_job_targets（送信開始時の宛先スナップショット）と
+        # sent_emails の差分 = 一度も送られていない宛先にだけ送る
+
+2 は、送信中にコンテナを再ビルドして送信スレッドが死んだ場合の復旧用
+（2026-07-17 に 194/961 で中断した事故。PROJECT_STATE §18.2）。
+起動時に running のまま残っていたジョブは interrupted に落として Telegram 通知されるので、
+その通知を見たらこのモードで再開する。差分だけを送るため二重送信にはならない。
+
 オプション:
     --confirm                 必須。これがないとドライランのみ
-    --error-pattern STR       error カラムが STR を含む行だけを対象（デフォルト: rate限定）
+    --resume-missing          未送信の宛先を対象にする（既定は失敗した宛先）
+    --error-pattern STR       error カラムが STR を含む行だけを対象（既定モードのみ）
     --interval-seconds 0.55   送信間隔（throttle 用）
 
 新しい bulk_send_jobs 行を作成するため、履歴上は別ジョブとして残る。
@@ -27,6 +40,10 @@ def main() -> None:
     p.add_argument("job_id", type=int, help="再送元のジョブID")
     p.add_argument("--confirm", action="store_true", help="本当に送信する")
     p.add_argument(
+        "--resume-missing", action="store_true",
+        help="中断ジョブの再開: 一度も送信されていない宛先だけを対象にする",
+    )
+    p.add_argument(
         "--error-pattern", default="Too many requests",
         help="この文字列を error に含む行だけを対象（既定: Resend rate limit）",
     )
@@ -44,21 +61,47 @@ def main() -> None:
         print(f"job #{args.job_id} not found")
         sys.exit(1)
 
-    # 失敗した宛先一覧を取得
     with db.get_conn() as c:
-        rows = c.execute(
-            """SELECT recipient_email AS email, recipient_name AS name, nft_type
-               FROM sent_emails
-               WHERE bulk_job_id = ?
-                 AND status = 'error'
-                 AND (error LIKE ?)""",
-            (args.job_id, f"%{args.error_pattern}%"),
-        ).fetchall()
+        if args.resume_missing:
+            # 送信開始時のスナップショットのうち、sent が 1 件も無い宛先だけ。
+            # 二重送信を防ぐ唯一の根拠がこの差分なので、必ず sent_emails 側で確認する。
+            rows = c.execute(
+                """SELECT t.recipient_email AS email, t.recipient_name AS name, t.nft_type
+                   FROM bulk_job_targets t
+                   WHERE t.job_id = ?
+                     AND NOT EXISTS (
+                         SELECT 1 FROM sent_emails s
+                         WHERE s.bulk_job_id = t.job_id
+                           AND lower(s.recipient_email) = lower(t.recipient_email)
+                           AND s.status = 'sent'
+                     )""",
+                (args.job_id,),
+            ).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT recipient_email AS email, recipient_name AS name, nft_type
+                   FROM sent_emails
+                   WHERE bulk_job_id = ?
+                     AND status = 'error'
+                     AND (error LIKE ?)""",
+                (args.job_id, f"%{args.error_pattern}%"),
+            ).fetchall()
     targets = [dict(r) for r in rows]
 
-    print(f"=== retry source: job #{src['id']} ===")
+    print(f"=== retry source: job #{src['id']} (status={src.get('status')}) ===")
     print(f"  subject: {src['subject']}")
-    print(f"  total recipients matching error pattern: {len(targets)}")
+    if args.resume_missing:
+        snapshot = 0
+        with db.get_conn() as c:
+            snapshot = c.execute(
+                "SELECT count(*) FROM bulk_job_targets WHERE job_id = ?", (args.job_id,)
+            ).fetchone()[0]
+        if not snapshot:
+            print("  bulk_job_targets にスナップショットがありません（この時期のジョブは再開できません）")
+            return
+        print(f"  snapshot={snapshot} / already sent={snapshot - len(targets)} / missing={len(targets)}")
+    else:
+        print(f"  total recipients matching error pattern: {len(targets)}")
     if not targets:
         print("nothing to retry")
         return

@@ -49,6 +49,7 @@ async def lifespan(app: FastAPI):
     db.init_db()
     if not admin_configured():
         log.warning("ADMIN_PASSWORD が未設定です。管理APIは 503 で拒否されます。")
+    _recover_interrupted_bulk_jobs()
     bot_thread = None
     if TELEGRAM_BOT_TOKEN:
         bot_thread = telegram_bot.start_bot_thread()
@@ -559,6 +560,39 @@ def _portal_telegram_notify(text: str) -> bool:
     except Exception:
         log.exception("Portal telegram notify failure")
         return False
+
+
+def _recover_interrupted_bulk_jobs() -> None:
+    """起動時、送信スレッドごと死んだ一括送信ジョブを検出して通知する。
+
+    黙って running のまま残ると、送られていない会員が居ることに誰も気づけない
+    （2026-07-17 の事故では 767 名が手動調査するまで放置された）。
+    """
+    try:
+        jobs = db.mark_interrupted_bulk_jobs()
+    except Exception:
+        log.exception("Interrupted bulk job recovery failed")
+        return
+    if not jobs:
+        return
+    lines = []
+    for j in jobs:
+        missing = max(0, (j.get("total") or 0) - (j.get("sent") or 0))
+        log.warning(
+            "Bulk job #%s was interrupted (sent=%s/%s); marked as interrupted",
+            j.get("id"), j.get("sent"), j.get("total"),
+        )
+        lines.append(
+            f"・#{j.get('id')} {str(j.get('subject') or '')[:30]} "
+            f"({j.get('sent')}/{j.get('total')}・未送信 {missing} 件)"
+        )
+    _portal_telegram_notify(
+        "⚠️ 再起動で中断した一括送信ジョブがあります\n\n"
+        + "\n".join(lines)
+        + "\n\n差分だけ送り直す:\n"
+        "docker exec betimail python /app/tools/retry_failed_bulk.py "
+        "&lt;job_id&gt; --resume-missing --confirm"
+    )
 
 
 @app.post("/api/portal/login")

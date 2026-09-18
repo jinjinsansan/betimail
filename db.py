@@ -803,6 +803,32 @@ def finish_bulk_job(job_id: int) -> None:
         )
 
 
+def mark_interrupted_bulk_jobs() -> list[dict]:
+    """起動時に running のまま残っているジョブを interrupted に落とし、その一覧を返す。
+
+    一括送信はコンテナ内のスレッドで走るので、再起動するとスレッドだけが死んで
+    status は running のまま取り残される（2026-07-17 に 194/961 で中断した事故）。
+    プロセスが上がり直した時点でそのスレッドはもう居ないため、
+    起動時の running は常に「中断された」を意味する。
+
+    送信済みの宛先は sent_emails に残っているので、
+    tools/retry_failed_bulk.py --resume-missing で差分だけ送り直せる。
+    """
+    now = datetime.now().isoformat()
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, subject, sent, total, created_at FROM bulk_send_jobs WHERE status = 'running'"
+        ).fetchall()
+        jobs = [dict(r) for r in rows]
+        if jobs:
+            conn.execute(
+                "UPDATE bulk_send_jobs SET status = 'interrupted', finished_at = ?"
+                " WHERE status = 'running'",
+                (now,),
+            )
+    return jobs
+
+
 def get_bulk_job(job_id: int) -> Optional[dict]:
     with get_conn() as conn:
         row = conn.execute("SELECT * FROM bulk_send_jobs WHERE id = ?", (job_id,)).fetchone()
