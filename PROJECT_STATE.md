@@ -1,6 +1,6 @@
 # Betimail プロジェクト状態ドキュメント
 
-**最終更新**: 2026-09-18 (ローカル開発環境の復旧 + 本ドキュメントの事実誤りを修正。セクション 22 参照。システム自体は 2026-07-20 から変更なし)
+**最終更新**: 2026-09-18 (`ai_knowledge.md` を VPS へ反映 + 本ドキュメントの事実誤りを修正 + ローカル環境の復旧。**外部 2 サイトのダウンを検出 — セクション 22.3 を必ず読む**)
 **目的**: 新規 Claude セッションでも即座に状況を把握し、開発・運用を継続できるようにする
 
 > ⚠️ **v1.1.0 以降、本番運用モード**: `TEST_MODE=false` のため実会員にメールが届く状態です。テスト時は **送信先・件名・予約時刻** を必ず確認してから操作してください。
@@ -1277,9 +1277,7 @@ with db.get_conn() as c:
 **§20.5 の 5 項目はすべて未着手のまま有効。** 加えて:
 
 1. **ポータル `/portal`・白 `/white` は 2026-09-09 時点でも未公開**（`PORTAL_ALLOWED_EMAILS` / `WHITE_ALLOWED_EMAILS` に `goldbenchan@gmail.com` のみ = 管理者限定のまま）。仁氏に確認済み
-2. **`ai_knowledge.md` の VPS 反映が未実施**。ローカルのコミットのみ。反映しないと AI 返信は旧情報のまま
-   - 手順: `scp ai_knowledge.md betimail-vps:/opt/betimail/` → `docker compose up -d --build betimail`
-   - **実行前に `bulk_send_jobs` に `status='running'` が無いことを必ず確認**（§18.2 の事故）
+2. ~~**`ai_knowledge.md` の VPS 反映が未実施**~~ → **2026-09-18 反映済み**（§22.2）
 3. ~~**PROJECT_STATE セクション 1・2 の人物・経緯の記述が §21.2 の誤りを含んだまま**~~ → **2026-09-18 修正済み**（§22.1）
 4. ~~**`git push` 未実施**~~ → **push 済み**（`origin/main` = `97b3e6d`）
 
@@ -1312,11 +1310,12 @@ Artifact のページを Edge のヘッドレスで印刷している（資料�
 
 ---
 
-## 22. 2026-09-18 ドキュメント事実修正 + ローカル開発環境の復旧（**新セッションは必ず読む**）
+## 22. 2026-09-18 知識ベース反映 + 事実修正 + ★外部サイトのダウン検出（**新セッションは必ず読む**）
 
 ### 22.1 このセッションでやったこと
 
-**本番（VPS・DB・Vercel）には一切触れていない。** ローカル環境の復旧とドキュメント修正のみ。
+ローカル環境の復旧・ドキュメント修正・`ai_knowledge.md` の VPS 反映（§22.2）を実施。
+DB・Vercel・`.env`・公開ゲートは変更していない。
 
 1. **ローカル開発環境を復旧**（§21.6 の「venv が使えない」を解消）
    - 壊れた `.venv/`（WSL 製・`pyvenv.cfg` の home=/usr/bin）を削除し、Windows の Python 3.12.10 で作り直し
@@ -1330,33 +1329,67 @@ Artifact のページを Edge のヘッドレスで印刷している（資料�
    - セクション 2 冒頭に「正本は `ai_knowledge.md`」の注記を追加
    - セクション 3.1 の AI 欄を **DeepSeek (`deepseek-chat`)** に修正（§21.6 の 1 点目）
 
-### 22.2 ★未実施・次セッションの最優先（権限で止まった作業）
+### 22.2 `ai_knowledge.md` の VPS 反映 — **完了**（§21.5-2 の宿題）
 
-**`ai_knowledge.md` の VPS 反映（§21.5-2）は未完了のまま。** このセッションでは VPS への
-コマンド実行が権限設定（auto mode の Production Reads 判定）で拒否され、
-`docker compose ps` すら実行できなかったため着手できていない。
+§18.2 の手順どおり実施:
 
-許可を得たうえで、以下の順で実行する:
+1. `bulk_send_jobs` に `running` / `scheduled` が **0 件**であることを確認（直近は job #13、2026-08-17、961/961 done）
+2. VPS 側 `ai_knowledge.md` を `ai_knowledge.md.bak-20260918` へ退避
+3. `scp` → `docker compose up -d --build betimail`
+4. 検証: コンテナ内 `/app/ai_knowledge.md` の md5 = `3e7e0722f115688b613f6f33dab7ed02`（ローカルと一致）・
+   `/health` 200・Telegram bot スレッド起動・外部 `https://api.betimail.uk/health` 200・`admin.betimail.uk` 200
 
-```bash
-# 1. 実行中の一括送信が無いことを必ず先に確認（§18.2 の事故の再発防止）
-ssh betimail-vps
-cd /opt/betimail && docker compose ps
-docker exec betimail python -c "import sqlite3;print(sqlite3.connect('/app/data/betimail.db').execute('select id,status,sent_count,total_count from bulk_send_jobs order by id desc limit 5').fetchall())"
-# 2. status='running' が無いことを確認できたら反映
-scp ai_knowledge.md betimail-vps:/opt/betimail/
-ssh betimail-vps "cd /opt/betimail && docker compose up -d --build betimail && curl -s localhost:8000/health"
-```
+**これで AI 返信は §21.2 の訂正済み情報（立ち上げ＝仁氏 / 事業主体＝草野氏 等）で応答する。**
 
-反映しない限り **AI 返信は §21.2 の誤った情報のまま**（「K氏が立ち上げた」等）返信する点に注意。
+なお、PROJECT_STATE に記録の無い一斉送信 **job #13（2026-08-17、961 通・失敗 0）** が実施されていた。
+内容は未確認（必要なら `sent_emails` / `bulk_send_jobs` の本文を参照）。
 
-### 22.3 状態スナップショット（2026-09-18）
+### 22.3 ★重大発見: 外部 2 サイトが 2026-09-13 からダウン（**次セッション最優先**）
 
-- git: `main` = `97b3e6d`、**origin と一致（§21.5-4 の「push 未実施」は解消済み）**
+VPS の cron ログ確認中に判明。**`nftportal.site` と `afi.irah.uk` の両方が落ちている。**
+
+| 項目 | 内容 |
+|---|---|
+| 初回エラー | **2026-09-13 22:15（afi）/ 22:30（nftportal）** — ほぼ同時刻 |
+| 連続失敗回数 | 各 **約 850 回**（2 サイトとも、本日まで継続中） |
+| エラー | `Page.goto: net::ERR_CERT_COMMON_NAME_INVALID` |
+| 実態 | 両ドメインとも **57.128.170.44**（OVH）に解決し、HTTP は `https://57.128.170.44:9443/` （ホスティング管理画面のポート）へ 301。TLS 証明書はホスト名に一致しない共用証明書。**アプリが配信されていない状態** |
+
+**影響:**
+
+1. **買い取り出金の自動監視が停止**（`sync_nftportal_withdraws.py`、30 分毎）。新規出金申請が
+   `withdraw_requests` に取り込まれず Telegram 通知も飛ばない。
+   現状 1,229 件・最終 `requested_at` は **2026-08-11**（サイト停止より前なので取りこぼしは無い見込み）
+2. **`sync_afi_withdraws.py`（15,45 毎時）も同様に全失敗**
+3. **§20.1「afi.irah.uk はまだ稼働中」という前提が崩れた。**
+   §20.4 のカットオーバー手順「公開直前に afi を最終スクレイピング → ETL 再実行」は
+   **このままでは実行不能**。白ダッシュボードのデータは 2026-07-20 スナップショットが最後になる
+4. ログが肥大（各 5MB 前後）。ディスクは 48% 使用でまだ余裕あり
+
+**示唆:** 2026-06 の `luckymustard.uk` 恒久ダウン（§17.1）と同じ展開。
+**元サイトが消えた以上、会員が自分の資産を確認できる場所は betimail の `/portal`・`/white` だけになる。**
+ソフトローンチのまま 2 か月止まっている両サイトの公開判断（§20.5）の優先度が上がった。
+
+**次セッションでやること:**
+
+1. **仁氏へ確認**: 両サイトのダウンは把握しているか / ベトナム法人・K氏側で復旧予定はあるか /
+   復旧しないなら afi の最終スナップショットは 2026-07-20 版で確定してよいか
+2. 復旧見込みが無いなら **2 つの cron を停止**（エラーログを吐き続けるだけのため）
+3. 買い取り出金の受付・記録をどこで行うか（ポータル `/portal` の出金申請に一本化するのが自然）
+4. `/portal`・`/white` のゲート解除と告知メルマガ（§20.4-3）の判断を仁氏へ再提起
+
+### 22.4 状態スナップショット（2026-09-18）
+
+- git: `main` = `ee2d456`、origin と一致（§21.5-4 の「push 未実施」は解消済み）
 - ローカル: `.venv` 復旧・**pytest 102 件パス**
-- VPS: **未接続**（権限拒否のため状態を確認できず）。最終確認は 2026-07-20
-- 本番: 3 サイト稼働のはず（`/lucky` 全会員公開、`/portal`・`/white` は管理者限定）— 今回は未検証
-- **§20.5 の 5 項目と §21.5 の 1・2 は依然すべて未着手**
+- VPS: **正常**。`betimail` Up（本日リビルド）/ `caddy` Up 3 months / `/health` 200 / ディスク 48%
+- cron: `lucky_distribute` は **正常稼働**（2026-09-17 20:00 に 393 名 / 685 枚 / 350.86 USDT 分配）。
+  **`sync_nftportal_withdraws` と `sync_afi_withdraws` は 2026-09-13 から全失敗**（§22.3）
+- 公開ゲート: `LUCKY_PORTAL_ALLOWED_EMAILS=`（全会員公開）/
+  `PORTAL_ALLOWED_EMAILS` `WHITE_ALLOWED_EMAILS` = `goldbenchan@gmail.com`（**管理者限定のまま**）
+- `TEST_MODE=false`（本番モード継続）
+- 会員操作の実績: `buyback_requests` 0 件 / `afi_withdrawals` 0 件（ソフトローンチのため当然）
+- **§20.5 の 5 項目と §21.5-1 は依然すべて未着手**
 
 ---
 
