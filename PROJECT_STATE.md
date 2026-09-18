@@ -1344,7 +1344,7 @@ DB・Vercel・`.env`・公開ゲートは変更していない。
 なお、PROJECT_STATE に記録の無い一斉送信 **job #13（2026-08-17、961 通・失敗 0）** が実施されていた。
 内容は未確認（必要なら `sent_emails` / `bulk_send_jobs` の本文を参照）。
 
-### 22.3 ★重大発見: 外部 2 サイトが 2026-09-13 からダウン（**次セッション最優先**）
+### 22.3 ★重大発見: 外部 2 サイトが 2026-09-13 から恒久ダウン（対応は §22.5〜22.7）
 
 VPS の cron ログ確認中に判明。**`nftportal.site` と `afi.irah.uk` の両方が落ちている。**
 
@@ -1370,26 +1370,65 @@ VPS の cron ログ確認中に判明。**`nftportal.site` と `afi.irah.uk` の
 **元サイトが消えた以上、会員が自分の資産を確認できる場所は betimail の `/portal`・`/white` だけになる。**
 ソフトローンチのまま 2 か月止まっている両サイトの公開判断（§20.5）の優先度が上がった。
 
-**次セッションでやること:**
+### 22.4 §22.3 に対する仁氏の回答（2026-09-18・確定）
 
-1. **仁氏へ確認**: 両サイトのダウンは把握しているか / ベトナム法人・K氏側で復旧予定はあるか /
-   復旧しないなら afi の最終スナップショットは 2026-07-20 版で確定してよいか
-2. 復旧見込みが無いなら **2 つの cron を停止**（エラーログを吐き続けるだけのため）
-3. 買い取り出金の受付・記録をどこで行うか（ポータル `/portal` の出金申請に一本化するのが自然）
-4. `/portal`・`/white` のゲート解除と告知メルマガ（§20.4-3）の判断を仁氏へ再提起
+1. **ダウンは把握済み。両サイトとも「もう復旧しない」** — 恒久ダウンとして扱う
+2. **afi の最終スナップショットは 2026-07-20 版で確定**（以後データは凍結）
+3. **失敗していた 2 つの cron は停止** → §22.5 で実施済み
+4. **告知メルマガは仁氏が手動で送信する**（システムからの一斉送信は使わない）
 
-### 22.4 状態スナップショット（2026-09-18）
+### 22.5 §22.3 を受けて実施した対応（2026-09-18）
+
+1. **cron 2 本を停止**（コメントアウトして行自体は保存）
+   - `sync_nftportal_withdraws.py`（30 分毎）/ `sync_afi_withdraws.py`（15,45 毎時）
+   - バックアップ: `/opt/betimail/crontab.bak-20260918`
+   - **現在有効な cron は `lucky_distribute`（毎日 20:00）の 1 本のみ**
+   - 復活させる場合は行頭の `# [2026-09-18 停止: ...]` を削除して `crontab -` で再投入
+2. **`/white` に基準日表示を追加**（`frontend/src/app/white/page.tsx`）
+   - HERO の文言を「旧ダッシュボードの**2026年7月20日時点**の残高を引き継いでいます」に変更
+   - NFT 口数タイルの下に常設の注記を追加:
+     「残高・保有口数は 2026年7月20日時点の記録です。元のダッシュボードは現在ご利用いただけないため、以降の数値は更新されません。」
+   - 日付は `SNAPSHOT_DATE` 定数（同ファイル冒頭）で一元管理
+   - `next build` 型チェック通過・`eslint --max-warnings=0` クリーン
+3. **`frontend/node_modules` を修復** — `blocks/css` が空の壊れたインストールで `next build` が
+   `Cannot find module './blocks/css'` で落ちていた。`npm ci` で再インストールして解消
+
+### 22.6 公開（ゲート解除）に関する確定事項
+
+- **ゲート解除は「仁氏の実機確認の後」**（2026-09-18 の回答）。今回は解除していない。
+  `PORTAL_ALLOWED_EMAILS` / `WHITE_ALLOWED_EMAILS` は `goldbenchan@gmail.com` のまま
+- **実機確認していただく内容**: `https://admin.betimail.uk/portal` で OTP ログイン →
+  ステーク / 買い取り申請 / 出金申請 の動作と Telegram 通知、`https://admin.betimail.uk/white` で
+  OTP ログイン → 基準日表示と出金申請、管理画面の「ポータル管理」「白ダッシュボード管理」タブ
+  - ⚠️ **買い取りボタンは不可逆**（§19.1）。確認は preview 会員 `goldbenchan@gmail.com` で行うこと
+- **解除手順**: VPS `/opt/betimail/.env` の `PORTAL_ALLOWED_EMAILS=` と `WHITE_ALLOWED_EMAILS=` を
+  両方空にして `docker compose up -d --build betimail`（実行前に running ジョブ確認）
+- **告知メルマガは仁氏が手動送信**するため、システム側の一斉送信の準備は不要
+
+### 22.7 ★スペシャルマスタード表示問題 — 方針確定（§20.5-1 の決着）
+
+**「①このまま公開し、問合せは個別対応」で確定**（2026-09-18 仁氏回答）。
+
+- `/portal` に表示されるスペシャル保有は**旧ポータル DB に記録のある 78 名 / 467 口のみ**
+- betimail 名簿上のスペシャル保有者は 259 名（luckymustard 取引履歴由来）→ **約 190 名は表示されない**
+- 補完表示（案②）は採用しない。**旧ポータル DB を正本とする原則を維持**
+- 問合せが来た場合は AI が「枚数相違 → `needs_human`」で取り次ぐ（`ai_knowledge.md` で教育済み）。
+  公開後に問合せが増えるようなら `ai_knowledge.md` §10 に定型回答を追記して調整する
+
+### 22.8 状態スナップショット（2026-09-18）
 
 - git: `main` = `ee2d456`、origin と一致（§21.5-4 の「push 未実施」は解消済み）
 - ローカル: `.venv` 復旧・**pytest 102 件パス**
 - VPS: **正常**。`betimail` Up（本日リビルド）/ `caddy` Up 3 months / `/health` 200 / ディスク 48%
-- cron: `lucky_distribute` は **正常稼働**（2026-09-17 20:00 に 393 名 / 685 枚 / 350.86 USDT 分配）。
-  **`sync_nftportal_withdraws` と `sync_afi_withdraws` は 2026-09-13 から全失敗**（§22.3）
+- cron: **`lucky_distribute`（毎日 20:00）の 1 本のみ有効**。2026-09-17 20:00 に 393 名 / 685 枚 / 350.86 USDT 分配。
+  `sync_nftportal_withdraws` と `sync_afi_withdraws` は **2026-09-18 に停止済み**（§22.3・§22.5）
 - 公開ゲート: `LUCKY_PORTAL_ALLOWED_EMAILS=`（全会員公開）/
-  `PORTAL_ALLOWED_EMAILS` `WHITE_ALLOWED_EMAILS` = `goldbenchan@gmail.com`（**管理者限定のまま**）
+  `PORTAL_ALLOWED_EMAILS` `WHITE_ALLOWED_EMAILS` = `goldbenchan@gmail.com`（**管理者限定のまま。解除は仁氏の実機確認後＝§22.6**）
 - `TEST_MODE=false`（本番モード継続）
 - 会員操作の実績: `buyback_requests` 0 件 / `afi_withdrawals` 0 件（ソフトローンチのため当然）
-- **§20.5 の 5 項目と §21.5-1 は依然すべて未着手**
+- **§20.5 の残り**: 1（スペシャル表示）→ §22.7 で決着 / 4（afi 出金停止の調整）→ §22.3 で失効 /
+  **2（実機確認）・3（告知文面）・5（会員リスト差分・LEADER 等）は未着手**
+- ローカル: `frontend/node_modules` も `npm ci` で修復済み（`next build` / `eslint` とも通過）
 
 ---
 

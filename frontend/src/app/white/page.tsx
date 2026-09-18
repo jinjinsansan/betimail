@@ -207,6 +207,10 @@ function Mark({ size, ringed }: { size: number; ringed?: boolean }) {
   );
 }
 
+// 元サイト afi.irah.uk は 2026-09-13 に恒久ダウン。データはこのスナップショットで凍結される。
+const SNAPSHOT_DATE = "2026年7月20日";
+const SNAPSHOT_NOTE = `残高・保有口数は${SNAPSHOT_DATE}時点の記録です。元のダッシュボードは現在ご利用いただけないため、以降の数値は更新されません。`;
+
 /* ================= ダッシュボード ================= */
 
 function Dashboard({ dash, onUpdate }: { dash: WhiteDashboard; onUpdate: (d: WhiteDashboard) => void }) {
@@ -232,7 +236,7 @@ function Dashboard({ dash, onUpdate }: { dash: WhiteDashboard; onUpdate: (d: Whi
           <div aria-hidden style={{ height: 1, background: "linear-gradient(90deg,var(--silver2),transparent)", margin: "18px 0 0" }} />
           <div style={{ fontSize: 11.5, color: "var(--sub)", marginTop: 13, display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--silver)", display: "inline-block" }} />
-            旧ダッシュボードの残高を引き継いでいます
+            旧ダッシュボードの{SNAPSHOT_DATE}時点の残高を引き継いでいます
           </div>
         </div>
       </div>
@@ -241,6 +245,12 @@ function Dashboard({ dash, onUpdate }: { dash: WhiteDashboard; onUpdate: (d: Whi
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 13 }}>
         <UnitTile label="会員権NFT" units={dash.kaiin_units} />
         <UnitTile label="パチスロホイホイ" units={dash.hoihoi_units} />
+      </div>
+
+      {/* データ基準日の注記（常設） */}
+      <div style={{ display: "flex", gap: 9, alignItems: "flex-start", background: "var(--card)", border: "1px solid var(--line)", borderRadius: 14, padding: "12px 14px", fontSize: 11.5, color: "var(--sub)", lineHeight: 1.75, boxShadow: "var(--shsm)" }}>
+        <span aria-hidden style={{ flex: "none" }}>ℹ️</span>
+        <span>{SNAPSHOT_NOTE}</span>
       </div>
 
       {/* 出金申請 */}
